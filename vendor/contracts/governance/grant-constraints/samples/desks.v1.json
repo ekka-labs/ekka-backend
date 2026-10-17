@@ -1,0 +1,46 @@
+{
+  "image_digests": [
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "policy_digests": [
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "allowed_hosts": [
+    "api.github.com",
+    "*.githubusercontent.com"
+  ],
+  "providers": [
+    "github"
+  ],
+  "provider_config_digests": {
+    "github": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "environment_keys": [
+    "TZ"
+  ],
+  "repo_hosts": [
+    "github.com"
+  ],
+  "policy_baseline": {
+    "must_equal": [
+      "filesystem",
+      "process",
+      "user_namespaces",
+      "enforcement",
+      "driver",
+      "runtime"
+    ],
+    "network": {
+      "allowed_hosts": [
+        "api.github.com"
+      ],
+      "allowed_ports": [
+        443,
+        22
+      ],
+      "allowed_cidrs": [],
+      "provider_added": "listed_only"
+    }
+  },
+  "requires_role": "admin"
+}

@@ -1,0 +1,96 @@
+{
+  "name": "github",
+  "provider": {
+    "type": "github",
+    "profileWorkspace": "desks",
+    "config": { "base_url": "https://api.github.com", "org": "acme" },
+    "credentials": { "GITHUB_TOKEN": "REDACTED" }
+  },
+  "profile": {
+  "id": "github",
+  "displayName": "GitHub",
+  "description": "GitHub API and Git operations",
+  "category": "PROVIDER_PROFILE_CATEGORY_SOURCE_CONTROL",
+  "credentials": [
+    {
+      "name": "api_token",
+      "description": "GitHub token",
+      "envVars": [
+        "GITHUB_TOKEN",
+        "GH_TOKEN"
+      ],
+      "required": true,
+      "authStyle": "bearer",
+      "headerName": "authorization"
+    }
+  ],
+  "endpoints": [
+    {
+      "host": "api.github.com",
+      "port": 443,
+      "protocol": "rest",
+      "enforcement": "NETWORK_ENFORCEMENT_MODE_ENFORCE",
+      "access": "NETWORK_ACCESS_PRESET_READ_ONLY"
+    },
+    {
+      "host": "api.github.com",
+      "port": 443,
+      "protocol": "graphql",
+      "enforcement": "NETWORK_ENFORCEMENT_MODE_ENFORCE",
+      "access": "NETWORK_ACCESS_PRESET_READ_ONLY",
+      "path": "/graphql"
+    },
+    {
+      "host": "github.com",
+      "port": 443,
+      "protocol": "rest",
+      "enforcement": "NETWORK_ENFORCEMENT_MODE_ENFORCE",
+      "rules": [
+        {
+          "allow": {
+            "method": "GET",
+            "path": "**"
+          }
+        },
+        {
+          "allow": {
+            "method": "HEAD",
+            "path": "**"
+          }
+        },
+        {
+          "allow": {
+            "method": "OPTIONS",
+            "path": "**"
+          }
+        },
+        {
+          "allow": {
+            "method": "POST",
+            "path": "/**/git-upload-pack"
+          }
+        }
+      ]
+    }
+  ],
+  "binaries": [
+    {
+      "path": "/usr/bin/gh"
+    },
+    {
+      "path": "/usr/local/bin/gh"
+    },
+    {
+      "path": "/usr/bin/git"
+    },
+    {
+      "path": "/usr/local/bin/git"
+    }
+  ],
+  "discovery": {
+    "credentials": [
+      "api_token"
+    ]
+  }
+}
+}

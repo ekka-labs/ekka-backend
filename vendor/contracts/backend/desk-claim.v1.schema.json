@@ -1,0 +1,377 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/backend/desk-claim.v1.schema.json",
+  "title": "DeskClaim",
+  "description": "How the backend adapter claims a desk on the Enclave before a change, and releases it after. JSON-RPC 2.0 over the Enclave's narrow backend-link socket in the shared socket folder, which carries exactly these three methods and nothing else. A claim takes the SAME lock a job's admission takes, created new, so a governed change and a job never run on one desk at once: the loser is refused DESK_BUSY naming the winner. Only the holder releases. A change that is `ready` or `refused` frees the desk; `unknown` keeps it held, marked, across restarts, until the adapter reconciles it or an operator releases it after reading the desk. Each call is one request object; a refusal is a JSON-RPC error whose message starts with one of `refusal_code` and a colon. Unknown fields are refused.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/claim_request"
+    },
+    {
+      "$ref": "#/$defs/release_request"
+    },
+    {
+      "$ref": "#/$defs/locks_request"
+    }
+  ],
+  "$defs": {
+    "desk": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$",
+      "description": "The desk's name, the same rule as the adapter contract's routes."
+    },
+    "provider": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$",
+      "description": "A provider's name, the same rule as the adapter contract's names."
+    },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The change's operation: a lowercase hyphenated UUID, the backend's request id."
+    },
+    "outcome": {
+      "enum": [
+        "ready",
+        "refused",
+        "unknown"
+      ],
+      "description": "How the change ended, in the adapter contract's words. `running` is never released: the claim stays until the change settles."
+    },
+    "holder": {
+      "type": "string",
+      "pattern": "^admin:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}( unknown)?$",
+      "description": "The lock's content when a change holds the desk: `admin:<operation id>`, with ` unknown` appended while its outcome is unknown. A job's lock holds its attempt id instead."
+    },
+    "jsonrpc": {
+      "const": "2.0"
+    },
+    "id": {
+      "type": [
+        "integer",
+        "string"
+      ]
+    },
+    "claim_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "method": {
+          "const": "runner_desk_claim"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "desk",
+            "operation_id"
+          ],
+          "properties": {
+            "desk": {
+              "$ref": "#/$defs/desk"
+            },
+            "operation_id": {
+              "$ref": "#/$defs/operation_id"
+            }
+          }
+        }
+      }
+    },
+    "release_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "method": {
+          "const": "runner_desk_release"
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "desk",
+            "operation_id",
+            "outcome"
+          ],
+          "properties": {
+            "desk": {
+              "$ref": "#/$defs/desk"
+            },
+            "operation_id": {
+              "$ref": "#/$defs/operation_id"
+            },
+            "outcome": {
+              "$ref": "#/$defs/outcome"
+            },
+            "read_back": {
+              "$ref": "#/$defs/read_back"
+            }
+          },
+          "if": {
+            "required": [
+              "read_back"
+            ],
+            "properties": {
+              "read_back": {
+                "required": [
+                  "deleted"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "ready"
+              }
+            }
+          },
+          "description": "A read-back saying the desk is gone is sent only with `ready`: a delete whose outcome is unknown has not been read back."
+        }
+      }
+    },
+    "locks_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "method": {
+          "const": "runner_desk_locks"
+        },
+        "params": {
+          "type": [
+            "object",
+            "array"
+          ],
+          "maxProperties": 0,
+          "maxItems": 0
+        }
+      }
+    },
+    "read_back": {
+      "description": "What the adapter read back after a `ready` change, in one of two shapes: the live desk (`read_back_live`), or that the desk is gone (`read_back_deleted`).",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/read_back_live"
+        },
+        {
+          "$ref": "#/$defs/read_back_deleted"
+        }
+      ]
+    },
+    "read_back_live": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sandbox_id",
+        "policy_digest"
+      ],
+      "description": "What the adapter's `status` read back after a `ready` change that moved the desk's accepted configuration. The Enclave files a re-pin to it, and its pin pass pins only if the live desk is exactly this.",
+      "properties": {
+        "sandbox_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "policy_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "providers_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "read_back_deleted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deleted",
+        "sandbox_id"
+      ],
+      "description": "What the adapter read back after a `ready` delete: the backend answered NOT_FOUND for the desk's sandbox id. It frees the lock and retires the desk's pins. `sandbox_id` must equal the sandbox id the Enclave pinned for this desk; any other is refused READ_BACK_MISMATCH and the claim is kept.",
+      "properties": {
+        "deleted": {
+          "const": true
+        },
+        "sandbox_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "claim_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claimed",
+        "required_providers"
+      ],
+      "description": "The claim was taken. `required_providers` is what the desk's own record on the Enclave says the desk's agent needs (`desk.agent.providers`), read under the claim, so it cannot change while the claim is held: the adapter refuses DESK_PROVIDER_REQUIRED for a detach of any provider listed here, before any call to the gateway. Empty for a desk the Enclave has no record of, or a new one. Never taken from a label or a request body.",
+      "properties": {
+        "claimed": {
+          "const": true
+        },
+        "required_providers": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/provider"
+          }
+        }
+      }
+    },
+    "release_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "released"
+      ],
+      "properties": {
+        "released": {
+          "enum": [
+            "freed",
+            "freed_repin_filed",
+            "freed_pins_retired",
+            "kept_unknown"
+          ],
+          "description": "`freed`: the desk is free. `freed_repin_filed`: free, and a re-pin to the read-back is filed. `freed_pins_retired`: free, and the desk's pins are retired after a read-back saying it is gone. `kept_unknown`: the outcome is unknown and the desk stays held."
+        }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "desk",
+        "holder_kind",
+        "holder_id",
+        "state"
+      ],
+      "properties": {
+        "desk": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63
+        },
+        "holder_kind": {
+          "enum": [
+            "job",
+            "admin"
+          ]
+        },
+        "holder_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "A job's attempt id, or a change's operation id."
+        },
+        "state": {
+          "enum": [
+            "held",
+            "unknown",
+            "unreadable"
+          ],
+          "description": "`unreadable` still holds the desk."
+        }
+      }
+    },
+    "locks_result": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/lock"
+      },
+      "description": "Every desk lock: who holds it, never what it was asked to do."
+    },
+    "refusal_code": {
+      "enum": [
+        "DESK_BUSY",
+        "DESK_NAME_INVALID",
+        "OPERATION_ID_INVALID",
+        "DESK_NOT_HELD",
+        "DESK_HELD_BY_ANOTHER",
+        "OUTCOME_INVALID",
+        "DESK_CLAIMS_UNAVAILABLE",
+        "READ_BACK_REQUIRED",
+        "READ_BACK_MISMATCH"
+      ],
+      "description": "DESK_BUSY: the desk is held by a job (naming its attempt) or another change. DESK_NAME_INVALID, OPERATION_ID_INVALID: a malformed call. DESK_NOT_HELD: no change holds the desk. DESK_HELD_BY_ANOTHER: another change holds it. OUTCOME_INVALID: not one of `outcome`. DESK_CLAIMS_UNAVAILABLE: this Enclave runs no desk executor. READ_BACK_REQUIRED: `ready` for a desk the Enclave has pinned, with no `read_back`; the claim is kept. READ_BACK_MISMATCH: a read-back saying the desk is gone names a sandbox id other than the pinned one; the claim is kept."
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "$ref": "#/$defs/jsonrpc"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "enum": [
+                -32602,
+                -32000
+              ],
+              "description": "-32602: the params are malformed or carry an unknown field. -32000: refused; the message names why."
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "For -32000, one of `refusal_code`, a colon and our own sentence. Never a request body."
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "operation_id": "3f1c2a9e-5b7d-4e2a-9c1b-7d6e5f4a3b2c",
+  "desk": "code-desk",
+  "backend_id": "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  "gateway_identity": "https://host.openshell.internal:8080#desks",
+  "gateway_restarted_at": "2026-10-16T05:00:00Z",
+  "quiet_until": "2026-10-16T05:01:30Z",
+  "containers": [
+    {
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "exited"
+    },
+    {
+      "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "state": "exited"
+    }
+  ]
+}

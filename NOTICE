@@ -1,0 +1,12 @@
+ekka-backend
+Copyright 2026 EKKA, Inc.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Third-party components and their licenses are listed in THIRD-PARTY-NOTICES.md.
+
+crates/openshell-proto/proto holds NVIDIA OpenShell's protocol
+definitions, vendored unchanged from https://github.com/NVIDIA/OpenShell at
+commit 5a7728c304b5528e954e9ae900cf21f84e1a12b1 (v0.1.4).
+Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+Licensed under the Apache License, Version 2.0; see
+crates/openshell-proto/proto/LICENSE.

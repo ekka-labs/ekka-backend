@@ -1,0 +1,6 @@
+# Pinned Rust toolchain: every build of a commit uses the same compiler.
+[toolchain]
+channel    = "1.92"
+components = ["rustfmt", "clippy"]
+profile    = "minimal"
+targets    = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]

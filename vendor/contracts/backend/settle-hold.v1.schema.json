@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/backend/settle-hold.v1.schema.json",
+  "title": "SettleHold",
+  "description": "A hold on ONE unfinished desk change while the kit settles it on the machine. Written by the kit's `up.sh desks settle <desk> --operation <id>` BEFORE it restarts the gateway, at `<state_dir>/settle/<operation id>.hold` (by default `/var/lib/ekka-backend/settle/<operation id>.hold`): a regular file, owned by the adapter's user, mode 0600. While it exists, the adapter never re-issues that change, whatever asks (a `status`, a redelivery, recovery). Why: a gateway answer of UNCERTAIN does not prove nothing ran, so the change's last-sent time can never be rolled back; without a hold, a `status` during the quiet window would send the change again after the restart, and the settle marker, whose window must start after the last send, would be refused. The kit removes the hold after it writes the marker. If the settle stops without a marker, the hold stays, and only a person removes it, with `up.sh desks unhold`, after checking the desk.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation_id",
+    "held_at"
+  ],
+  "properties": {
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The unfinished operation held: the adapter's request id for it, a lowercase hyphenated UUID, the same id the file is named by and the settle marker names. The adapter honors the hold for this operation only."
+    },
+    "held_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "description": "When the kit wrote the hold, UTC. Before the gateway restart the settle marker records."
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "operation_id": "7c2e9b4a-1d3f-4a5b-8c6d-2e4f6a8b0c1d",
+  "desk": "new-desk",
+  "backend_id": null,
+  "gateway_identity": "https://host.openshell.internal:8080#desks",
+  "gateway_restarted_at": "2026-10-16T05:00:00Z",
+  "quiet_until": "2026-10-16T05:01:30Z",
+  "containers": []
+}

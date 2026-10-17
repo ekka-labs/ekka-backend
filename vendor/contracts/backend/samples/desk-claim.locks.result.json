@@ -1,0 +1,14 @@
+[
+  {
+    "desk": "code-desk",
+    "holder_kind": "admin",
+    "holder_id": "3f1c2a9e-5b7d-4e2a-9c1b-7d6e5f4a3b2c",
+    "state": "unknown"
+  },
+  {
+    "desk": "business-desk",
+    "holder_kind": "job",
+    "holder_id": "attempt-7f2c",
+    "state": "held"
+  }
+]

@@ -1,0 +1,153 @@
+{
+  "_README": [
+    "A desk gate token as EKKA Govern mints it, for one desk operation, not",
+    "written by hand.",
+    "",
+    "DO NOT EDIT. Every field of `signed` is inside an Ed25519 signature.",
+    "It is signed by the TEST key (seed: 32 bytes of 0x02), never a real one;",
+    "`gate_token_public_key_b64` is that key, as Govern publishes it.",
+    "",
+    "`minted_at` is the clock it was minted at, and `token.expires_at` when",
+    "it stops being valid: a test that verifies it pins its clock between them.",
+    "`token` is the decoded inner token, for reading; verify `signed`."
+  ],
+  "gate_token_public_key_b64": "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=",
+  "minted_at": "2026-10-15T00:00:00.000Z",
+  "signed": {
+    "schema": "SIGNED_GATE_TOKEN",
+    "signing_alg": "ed25519",
+    "key_id": "govern-gate-token-v1",
+    "token": {
+      "schema": "ekka.gate_token.v1",
+      "token_id": "b88d004b-b342-4447-917d-c5d4264589d6",
+      "issuer": "ekka-govern",
+      "issuer_kind": "govern",
+      "issued_at": "2026-10-15T00:00:00.000Z",
+      "expires_at": "2026-10-15T00:30:00.000Z",
+      "tenant_id": "11111111-1111-4111-8111-111111111111",
+      "run_id": "r-1",
+      "scope": {
+        "contract": "ekka.gate.api.v1",
+        "instance": "enclave3a7e592fApi",
+        "resource": "apis/desks",
+        "op": "write"
+      },
+      "constraints": {
+        "grant": {
+          "image_digests": [
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "policy_digests": [
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ],
+          "allowed_hosts": [
+            "api.github.com",
+            "*.githubusercontent.com"
+          ],
+          "providers": [
+            "github"
+          ],
+          "provider_config_digests": {
+            "github": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          "environment_keys": [
+            "TZ"
+          ],
+          "repo_hosts": [
+            "github.com"
+          ],
+          "policy_baseline": {
+            "must_equal": [
+              "filesystem",
+              "process",
+              "user_namespaces",
+              "enforcement",
+              "driver",
+              "runtime"
+            ],
+            "network": {
+              "allowed_hosts": [
+                "api.github.com"
+              ],
+              "allowed_ports": [
+                443,
+                22
+              ],
+              "allowed_cidrs": [],
+              "provider_added": "listed_only"
+            }
+          },
+          "requires_role": "admin"
+        },
+        "body_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    "token_canonical_b64": "eyJjb25zdHJhaW50cyI6eyJib2R5X3NoYTI1NiI6ImZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYiLCJncmFudCI6eyJhbGxvd2VkX2hvc3RzIjpbImFwaS5naXRodWIuY29tIiwiKi5naXRodWJ1c2VyY29udGVudC5jb20iXSwiZW52aXJvbm1lbnRfa2V5cyI6WyJUWiJdLCJpbWFnZV9kaWdlc3RzIjpbInNoYTI1NjphYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIl0sInBvbGljeV9iYXNlbGluZSI6eyJtdXN0X2VxdWFsIjpbImZpbGVzeXN0ZW0iLCJwcm9jZXNzIiwidXNlcl9uYW1lc3BhY2VzIiwiZW5mb3JjZW1lbnQiLCJkcml2ZXIiLCJydW50aW1lIl0sIm5ldHdvcmsiOnsiYWxsb3dlZF9jaWRycyI6W10sImFsbG93ZWRfaG9zdHMiOlsiYXBpLmdpdGh1Yi5jb20iXSwiYWxsb3dlZF9wb3J0cyI6WzQ0MywyMl0sInByb3ZpZGVyX2FkZGVkIjoibGlzdGVkX29ubHkifX0sInBvbGljeV9kaWdlc3RzIjpbInNoYTI1NjpiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIl0sInByb3ZpZGVyX2NvbmZpZ19kaWdlc3RzIjp7ImdpdGh1YiI6InNoYTI1NjpjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIn0sInByb3ZpZGVycyI6WyJnaXRodWIiXSwicmVwb19ob3N0cyI6WyJnaXRodWIuY29tIl0sInJlcXVpcmVzX3JvbGUiOiJhZG1pbiJ9fSwiZXhwaXJlc19hdCI6IjIwMjYtMTAtMTVUMDA6MzA6MDAuMDAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTVUMDA6MDA6MDAuMDAwWiIsImlzc3VlciI6ImVra2EtZ292ZXJuIiwiaXNzdWVyX2tpbmQiOiJnb3Zlcm4iLCJydW5faWQiOiJyLTEiLCJzY2hlbWEiOiJla2thLmdhdGVfdG9rZW4udjEiLCJzY29wZSI6eyJjb250cmFjdCI6ImVra2EuZ2F0ZS5hcGkudjEiLCJpbnN0YW5jZSI6ImVuY2xhdmUzYTdlNTkyZkFwaSIsIm9wIjoid3JpdGUiLCJyZXNvdXJjZSI6ImFwaXMvZGVza3MifSwidGVuYW50X2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwidG9rZW5faWQiOiJiODhkMDA0Yi1iMzQyLTQ0NDctOTE3ZC1jNWQ0MjY0NTg5ZDYifQ==",
+    "signature_b64": "IUN6MYnIKI4HmG3h4KiSXqNcB1H6oykwX6d+vgcMS6kO4SDSnpaBLBgAjkEWByHU9p8SlxaokKvdbhfZmnEbDA=="
+  },
+  "token": {
+    "constraints": {
+      "body_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "grant": {
+        "allowed_hosts": [
+          "api.github.com",
+          "*.githubusercontent.com"
+        ],
+        "environment_keys": [
+          "TZ"
+        ],
+        "image_digests": [
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        "policy_baseline": {
+          "must_equal": [
+            "filesystem",
+            "process",
+            "user_namespaces",
+            "enforcement",
+            "driver",
+            "runtime"
+          ],
+          "network": {
+            "allowed_cidrs": [],
+            "allowed_hosts": [
+              "api.github.com"
+            ],
+            "allowed_ports": [
+              443,
+              22
+            ],
+            "provider_added": "listed_only"
+          }
+        },
+        "policy_digests": [
+          "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "provider_config_digests": {
+          "github": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "providers": [
+          "github"
+        ],
+        "repo_hosts": [
+          "github.com"
+        ],
+        "requires_role": "admin"
+      }
+    },
+    "expires_at": "2026-10-15T00:30:00.000Z",
+    "issued_at": "2026-10-15T00:00:00.000Z",
+    "issuer": "ekka-govern",
+    "issuer_kind": "govern",
+    "run_id": "r-1",
+    "schema": "ekka.gate_token.v1",
+    "scope": {
+      "contract": "ekka.gate.api.v1",
+      "instance": "enclave3a7e592fApi",
+      "op": "write",
+      "resource": "apis/desks"
+    },
+    "tenant_id": "11111111-1111-4111-8111-111111111111",
+    "token_id": "b88d004b-b342-4447-917d-c5d4264589d6"
+  }
+}

@@ -1,0 +1,23 @@
+# cargo-about: the third-party notices for the shipped adapter, written to
+# THIRD-PARTY-NOTICES.md by `cargo about generate --manifest-path
+# crates/ekka-backend/Cargo.toml dist/templates/notices.hbs`. The manifest path
+# names the shipped binary's crate: the workspace also holds the test-only
+# ekka-backend-fakegw, whose dependencies never ship.
+# `accepted` MUST equal deny.toml's [licenses].allow.
+accepted = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "Zlib",
+  "0BSD",
+  "CDLA-Permissive-2.0",
+]
+ignore-dev-dependencies = true
+
+[private]
+ignore = true

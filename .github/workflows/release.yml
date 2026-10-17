@@ -1,0 +1,103 @@
+name: release
+
+# Publish the adapter image for a version tag (v1.2.3): build, push, sign the
+# DIGEST keyless, attach an SBOM attestation, then verify both with the exact
+# identity an installer pins. Any error stops the run. If signing fails after
+# the push, the image stays in the registry unsigned, and an installer that
+# verifies before it pulls refuses it.
+#
+# Verify a release with:
+#   cosign verify \
+#     --certificate-identity-regexp '^https://github\.com/ekka-labs/ekka-backend/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     ghcr.io/ekka-labs/ekka-backend@sha256:<digest>
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  # Push to this organization's ghcr with the workflow's own token.
+  packages: write
+  # Keyless signing: a short-lived OIDC token naming THIS workflow run. It
+  # grants no repository write; Sigstore certifies the run's identity.
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # The one place the registry is named.
+  REGISTRY: ghcr.io/ekka-labs
+  IMAGE_NAME: ekka-backend
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: The tag is the version Cargo.toml declares
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $TAG is not vX.Y.Z"; exit 1; }
+          [[ "$TAG" == "v$version" ]] || { echo "::error::tag $TAG but Cargo.toml says $version"; exit 1; }
+
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.4.1'
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435  # v3.11.1
+
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1  # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83  # v6.18.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+
+      - name: The pushed image answers --version with this version
+        env:
+          REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm "$REF" --version)"
+          echo "$out"
+          [[ "$out" == "ekka-backend ${TAG#v} (contract ekka.backend.v1)" ]]
+
+      - uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c  # v0.20.5
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Sign the digest keyless, attest the SBOM, and verify both
+        env:
+          REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$
+          ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          [[ "$REF" == *@sha256:* ]] || { echo "::error::no digest to sign"; exit 1; }
+          cosign sign --yes "$REF"
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$REF"
+          cosign verify --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$REF" > /dev/null
+          cosign verify-attestation --type spdxjson \
+            --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$REF" > /dev/null
+          echo "published, signed and verified: $REF" | tee -a "$GITHUB_STEP_SUMMARY"

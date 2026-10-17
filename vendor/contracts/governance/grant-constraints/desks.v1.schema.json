@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/governance/grant-constraints/desks.v1.schema.json",
+  "title": "DeskGrantConstraintsV1",
+  "description": "The limits on an organization's grant to administer its desks: `api.write` on `apis/desks`. They are stored on the grant, copied by Govern into the signed gate token's `constraints`, and enforced by the backend adapter before any backend call. CLOSED: an unknown key is refused, never ignored, because an ignored limit is a limit nobody enforces. Every list the adapter needs in order to allow anything is required and non-empty: no list, no create. Rules a schema cannot state are the adapter's, and refuse with the code naming the limit: every name in `providers` has an entry in `provider_config_digests`, and no other name does; a create's image digest (after `@`, or the whole value when it is a local content ID) is in `image_digests`; every host in `policy_baseline.network.allowed_hosts` is inside the `allowed_hosts` ceiling.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "image_digests",
+    "policy_digests",
+    "allowed_hosts",
+    "providers",
+    "provider_config_digests",
+    "environment_keys",
+    "repo_hosts",
+    "policy_baseline",
+    "requires_role"
+  ],
+  "properties": {
+    "image_digests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/digest" },
+      "description": "The images a desk may be created from, by digest: a registry digest for an image from a registry, or the local content ID (Docker's image ID) for an image the machine built itself. They are different hashes of one image; list the one the create names. A create whose image digest is not here is refused CONSTRAINT_IMAGE_DIGESTS."
+    },
+    "policy_digests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/digest" },
+      "description": "The reviewed BASELINE policies a create may start from, by the digest the adapter computes. They govern a create only; later changes are held to `allowed_hosts`."
+    },
+    "allowed_hosts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(\\*\\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+      },
+      "description": "The ceiling: every host any desk policy allows, at create and after every later change, must be one of these, or under a `*.` entry. A change that reaches outside it is refused CONSTRAINT_ALLOWED_HOSTS."
+    },
+    "providers": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/name" },
+      "description": "The providers a desk may have attached. Empty means none."
+    },
+    "provider_config_digests": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" },
+      "additionalProperties": { "$ref": "#/$defs/digest" },
+      "description": "For each provider, the digest of the configuration the Enclave accepted at install. An attach or detach of a provider whose configuration no longer matches is refused CONSTRAINT_PROVIDER_CONFIG_DIGESTS."
+    },
+    "environment_keys": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$" },
+      "description": "The environment names a create may set. Empty means none."
+    },
+    "repo_hosts": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+      },
+      "description": "Unused since 0.65.0: a create carries no repository (repositories reach a desk through a setup plan), so nothing reads this limit. It stays required so every grant written before stays valid; write []."
+    },
+    "policy_baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["must_equal", "network"],
+      "description": "What every desk policy, at create and after every change, must keep. The adapter compares the RESULTING policy with it, not only the request.",
+      "properties": {
+        "must_equal": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "enum": ["filesystem", "process", "user_namespaces", "enforcement", "driver", "runtime"] },
+          "description": "The parts of a policy that may never differ from the baseline a desk started from: filesystem access, process identity, user namespaces, enforcement mode, and driver and runtime settings. All six, always: leaving one out would let a change reach it."
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed_hosts", "allowed_ports", "allowed_cidrs", "provider_added"],
+          "properties": {
+            "allowed_hosts": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^(\\*\\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$" },
+              "description": "The hosts the baseline policy itself allows. Each is inside the `allowed_hosts` ceiling."
+            },
+            "allowed_ports": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "description": "The only ports any network rule may name, for example 443 and 22."
+            },
+            "allowed_cidrs": {
+              "type": "array",
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})/([0-9]|[12][0-9]|3[0-2])$"
+              },
+              "description": "Address ranges a network rule may name. Empty means none: a rule names hosts."
+            },
+            "provider_added": {
+              "const": "listed_only",
+              "description": "A change may add the network access a provider needs only for a provider in `providers`."
+            }
+          }
+        }
+      }
+    },
+    "requires_role": {
+      "const": "admin",
+      "description": "The organization role a run must have been started by for Govern to sign a token from this grant. Govern checks it when the grant is used; the adapter does not."
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" }
+  }
+}

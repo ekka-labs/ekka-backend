@@ -1,0 +1,5 @@
+desk-gate-token.json is a desk gate token minted by EKKA Govern's own token
+issuer for one desk operation, signed with Govern's TEST key (seed: 32 bytes
+of 0x02). Its `_README` was shortened; every other field is as minted. Never
+edit `signed`: the signature covers it. Replace the whole file when Govern's
+token format changes.

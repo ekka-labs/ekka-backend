@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32000,
+    "message": "DESK_BUSY: desk 'code-desk' is held by job attempt 'attempt-7f2c'"
+  }
+}

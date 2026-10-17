@@ -1,0 +1,6 @@
+{
+  "delivery": "first",
+  "outcome": "refused",
+  "desk_ready": false,
+  "code": "DESK_PROVIDER_REQUIRED"
+}

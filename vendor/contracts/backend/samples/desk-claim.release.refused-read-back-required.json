@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "error": {
+    "code": -32000,
+    "message": "READ_BACK_REQUIRED: desk 'code-desk' is pinned, and a ready change must say what it read back; the claim is kept"
+  }
+}

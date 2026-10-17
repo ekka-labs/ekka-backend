@@ -1,0 +1,24 @@
+# gitleaks: the default rules, with this repository's test data allowed by
+# exact place. Nothing here is a secret: each allowed value is an example or
+# is signed by a test key.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The contract's sample calls (vendored, each file pinned by sha256 in CONTRACTS_PIN) and the gate token fixture signed by the test key"
+paths = [
+  '''^vendor/contracts/backend/samples/[a-z.-]+\.json$''',
+  '''^crates/ekka-backend/tests/fixtures/govern/desk-gate-token\.json$''',
+]
+
+[[allowlists]]
+description = "Example values in tests: a gate token's id, which is a UUID"
+regexTarget = "match"
+regexes = [
+  '''token_id["']?\s*[:=]\s*["'][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["']''',
+]
+
+[[allowlists]]
+description = "An API gate instance id: the name of an Enclave instance, not a credential"
+regexes = ['''^enclave[0-9a-f]{8}Api$''']

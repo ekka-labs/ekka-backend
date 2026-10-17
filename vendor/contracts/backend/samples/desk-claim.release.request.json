@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "runner_desk_release",
+  "params": {
+    "desk": "code-desk",
+    "operation_id": "3f1c2a9e-5b7d-4e2a-9c1b-7d6e5f4a3b2c",
+    "outcome": "ready",
+    "read_back": {
+      "sandbox_id": "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "policy_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "providers_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  }
+}

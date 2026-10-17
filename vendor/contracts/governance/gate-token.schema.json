@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/governance/gate-token.schema.json",
+  "title": "SignedGateToken",
+  "description": "The ONE unified Gate Token — the ephemeral, signed, single-operation credential a Gate verifies before any privileged access (GATE_SPEC §7). Minted just-in-time from a durable Grant by an ISSUER (Govern today; a human approver in a future HITL flow), scoped to one `(contract, instance, resource, op)` and expiring in seconds. This single token type REPLACES the former KAT / LAT / MAT: those were the same artifact scoped for different gate kinds, and the kind already lives in `scope.contract`. Kind-specific per-op limits (an llm token's token-caps + prompt-binding, a write token's row cap) ride as the open `constraints` block, so the polymorphism that made the LAT look different lives there, not in a separate token species. SIGNING (carry-canonical convention, matches the Operation Manifest + the gate receipt): Govern signs the EXACT canonical bytes carried in `token_canonical_b64` with Ed25519; the Gate decodes + verifies THOSE bytes against the pinned Govern key and MUST NOT re-canonicalize `token` (canonicalization drift is a security hole). The Gate confirms the token's scope covers the requested `(contract, instance, resource, op)` under the declared match mode; a request no token covers is refused by Govern at dispatch, before the Gate is called (deny before I/O, §6.2). This is a STANDALONE signed envelope (not a member of the codegen'd *AT family in scripts/signed-envelope-family.manifest.ts): its inner `issuer` is intentionally a free identity + `issuer_kind` discriminator so a future human issuer is additive, whereas the family fixes `issuer` to the const `ekka-govern`.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "SIGNED_GATE_TOKEN",
+      "description": "Wire discriminator for the signed Gate Token envelope."
+    },
+    "signing_alg": {
+      "type": "string",
+      "const": "ed25519",
+      "description": "Signature algorithm. Today only Ed25519 is supported — declared explicitly so a future algorithm migration is a wire-level discriminator change, not a silent reinterpretation."
+    },
+    "key_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the Ed25519 key that produced `signature_b64`. The Gate resolves this to the anchored Govern signing key (GATE_SPEC §7.4). Enables key rotation — a verifier may hold multiple keys keyed by `key_id`."
+    },
+    "signature_b64": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Base64-encoded Ed25519 signature over decode(token_canonical_b64) under the key identified by `key_id`."
+    },
+    "token": {
+      "$ref": "#/$defs/GateToken",
+      "description": "The decoded inner token, inlined for readability + schema validation. MUST byte-match decode(token_canonical_b64). Verification is against the canonical bytes, never against a re-serialization of this object."
+    },
+    "token_canonical_b64": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Base64-encoded canonical JSON of `token` — the EXACT bytes signed. Verifiers MUST check `signature_b64` against these bytes, NOT against a re-canonicalization of `token`."
+    }
+  },
+  "required": [
+    "schema",
+    "signing_alg",
+    "key_id",
+    "signature_b64",
+    "token",
+    "token_canonical_b64"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "GateToken": {
+      "type": "object",
+      "description": "Inner claim of a Gate Token. Carries the identity/lifetime header, the authorization scope `(contract, instance, resource, op)`, and an optional kind-specific `constraints` block. No backend payload appears here — the token authorizes; the native payload travels in the action request and is constrained by the Gate.",
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "ekka.gate_token.v1",
+          "description": "Inner-claim wire version discriminator."
+        },
+        "token_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Issuance id for this token. The gate receipt's `token_id` MUST equal this value, binding the attestation to the credential that authorized it."
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identity of the party that minted this token. `ekka-govern` when Govern issues at dispatch; a human principal identifier under a future step-up / HITL approval flow. The Gate does not enforce against this value directly — it trusts the anchored signer (`key_id`) — but records it for audit."
+        },
+        "issuer_kind": {
+          "type": "string",
+          "enum": [
+            "govern",
+            "human"
+          ],
+          "description": "What kind of issuer minted the token. `govern` today (Govern at dispatch, after confirming a Grant covers the request); `human` reserved for a future HITL approver. Modeled now so a human issuer is an additive change, not a wire break."
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Issuance timestamp. Verifiers compare against `expires_at` and a local now() with bounded skew (±30s, §7.4)."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Expiry timestamp. Verifiers MUST reject when now() > expires_at (±30s skew). Short TTL — seconds — is the revocation lever; Gates are stateless wrt revocation."
+        },
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Tenant the token was issued under. The Gate MUST check the request tenant context matches."
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The run this token is bound to. Free-form string — Govern may choose its own run-id format; non-UUID ids must still verify."
+        },
+        "scope": {
+          "$ref": "#/$defs/TokenScope",
+          "description": "The authorization scope. A Gate MUST reject (SCOPE_MISMATCH) any request the scope does not cover under the Gate's declared match mode; the scope MUST be ⊆ the covering Grant (containment, §7.3)."
+        },
+        "constraints": {
+          "type": "object",
+          "description": "Optional, OPEN for most token kinds, kind-specific per-op limits. Examples: an `llm` token's `token_caps` + `prompt_binding`; a write token's row cap. Absent means no per-op limit beyond the scope. This is where the polymorphism that once distinguished the LAT lives; it MUST NOT carry anything a verifier needs to establish scope (scope is authoritative). On an API-gate token (`scope.contract` `ekka.gate.api.v1`) it is CLOSED: the covering grant's limits under ONE key, `grant`, exactly as the grant stores them, and beside it the reserved call-level field `body_sha256` when the call pins its body. A grant key can never collide with the pin. For a desk grant (`api.write` on `apis/desks`) `grant` is exactly governance/grant-constraints/desks.v1.schema.json."
+        },
+        "binding_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional. The fingerprint of the ALIAS BINDING this token was pinned to at grant time — a hash over the canonical alias record (alias design §2.4). Present only for gates that use the alias resource model (absent for first-party gates that do not). When present, the Gate MUST recompute the fingerprint of the alias it resolves at execution and reject (fail closed) on mismatch, so a silently re-pointed alias cannot be acted on under an old authorization. Carried through Grant → token → receipt without Govern ever seeing the concrete resource name."
+        }
+      },
+      "required": [
+        "schema",
+        "token_id",
+        "issuer",
+        "issuer_kind",
+        "issued_at",
+        "expires_at",
+        "tenant_id",
+        "run_id",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "scope",
+              "constraints"
+            ],
+            "properties": {
+              "scope": {
+                "required": [
+                  "contract"
+                ],
+                "properties": {
+                  "contract": {
+                    "const": "ekka.gate.api.v1"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "grant": {
+                    "type": "object",
+                    "description": "The covering grant's limits, exactly as the grant stores them. Absent when the grant has none."
+                  },
+                  "body_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "Reserved, call-level: the sha256 of this call's body. Set by Govern per call, never by a grant."
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "TokenScope": {
+      "type": "object",
+      "description": "The coarse authorization tuple `(contract, instance, resource, op)`, plus the OPTIONAL `capability` this token was minted under (reserved, see that field). EKKA authorizes at this granularity only; the actual operation is the backend's native payload, opaque to Govern and confined by the Gate (GATE_SPEC principle 1).",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "pattern": "^ekka\\.gate\\.[a-z][a-z0-9]*\\.v[0-9]+$",
+          "description": "The Gate's interface identity + version, e.g. `ekka.gate.postgres.v1`, `ekka.gate.slack.v1`, `ekka.gate.llm.v1`. There is no `ekka.connector.*` / `ekka.ai_gateway.*` (GATE_SPEC §9.1, §16)."
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Govern-assigned CANONICAL instance id this token is scoped to (not a tenant-chosen alias; Govern resolves alias → canonical instance at mint time). Grants, tokens, and receipts all bind to this. For a call through the API gate (`ekka.gate.api.v1`) it is the organization's API-gate instance, and `resource` names the connection, for example `apis/desks`."
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^([A-Za-z0-9][A-Za-z0-9._-]*|\\*)(/([A-Za-z0-9][A-Za-z0-9._-]*|\\*))*$",
+          "description": "A resource SELECTOR in the Gate's declared namespace (leaf when the op is single-target; a prefix/single-level-glob pattern when the op is inherently set-valued). Always ⊆ the covering Grant's selector. Canonical selector definition: common/resource-selector.schema.json (GATE_SPEC §9.3); pattern inlined here so the generated validator is self-contained."
+        },
+        "op": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*$",
+          "description": "The authorization verb, e.g. `read`, `list`, `write`, `invoke`, `complete`. Drawn from the reserved op set, extensible per-gate via the GateDeclaration. MUST be one of the ops the Gate advertises for `resource`."
+        },
+        "capability": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*){1,2}$",
+          "description": "OPTIONAL, RESERVED (GATE_SPEC 1.3.0): accepted by this schema, NOT YET MINTED by Govern. The capability code of the Grant this token was minted from, e.g. `file.fs.extract`, `knowledge.postgres.read`. `op` names the verb the request performs; this names the authority it was issued under, and the two are not interchangeable. GATE_SPEC §7.3 already requires the scope to be ⊆ the covering Grant, but a verifier holding only `op` cannot check that containment: an authorized and an unauthorized request carry an identical `op`. Absent means a token minted before this field existed, and a verifier MUST NOT infer authority from its absence."
+        }
+      },
+      "required": [
+        "contract",
+        "instance",
+        "resource",
+        "op"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

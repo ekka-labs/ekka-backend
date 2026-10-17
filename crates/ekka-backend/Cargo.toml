@@ -1,0 +1,54 @@
+[package]
+name                 = "ekka-backend"
+description          = "The EKKA desk backend adapter: verifies Govern's signed authorization and makes governed desk changes on the customer's desk backend."
+version.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+publish              = false
+
+[[bin]]
+name = "ekka-backend"
+path = "src/main.rs"
+
+[dependencies]
+# Small, widely used crates; one async runtime and one TLS stack.
+tokio          = { version = "1.52", default-features = false, features = ["rt-multi-thread", "macros", "net", "time", "io-util", "signal"] }
+hyper          = { version = "1.9", default-features = false, features = ["server", "http1"] }
+hyper-util     = { version = "0.1.20", default-features = false, features = ["tokio"] }
+http-body-util = "0.1.3"
+bytes          = "1"
+serde          = { version = "1.0.228", features = ["derive"] }
+serde_json     = "1.0.149"
+sha2           = "0.10.9"
+base64         = "0.22.1"
+tracing        = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "json"] }
+rustix         = { version = "1.1", default-features = false, features = ["std", "process"] }
+ed25519-dalek  = { version = "2", default-features = false, features = ["std"] }
+chrono         = { version = "0.4", default-features = false, features = ["std", "clock"] }
+prost          = { workspace = true }
+prost-reflect  = { workspace = true }
+openshell-proto = { path = "../openshell-proto" }
+# The gateway and its sign-in service: tonic over rustls with the ring backend
+# and the Mozilla roots plus the installer's CA, and reqwest on the same rustls
+# for the issuer. No second TLS stack.
+tonic          = { workspace = true, features = ["tls-ring", "tls-webpki-roots"] }
+reqwest        = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+url            = "2"
+# A call's backend credential is zeroed in memory when the call ends.
+zeroize        = "1"
+# An operation's request id is a UUIDv5, so a redelivery maps to the same id.
+uuid           = { version = "1", default-features = false, features = ["std", "v5"] }
+
+[dev-dependencies]
+tempfile = "3.27"
+# A fake gateway answers on the proto's paths, and a fake issuer over HTTP and
+# over TLS with a throwaway CA. They live in their own crate so the tests
+# under tests/ use the same ones.
+ekka-backend-fakegw = { path = "../ekka-backend-fakegw" }
+
+[lints]
+workspace = true

@@ -1,0 +1,568 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/backend/backend-v1.schema.json",
+  "title": "BackendV1Call",
+  "description": "One call to an EKKA backend adapter (`ekka.backend` v1) as the adapter receives it on its Unix socket: the operation, the path values its route names, the three required headers and the strict body. The route for each operation is in operations.json. The answer is `$defs.result`. The adapter verifies the Govern-signed gate token in `x-ekka-gate-token` offline before it reads anything else, enforces the limits the token carries (governance/grant-constraints), and never answers with a backend's own error text. Nothing in this contract names a backend's API: the adapter's driver turns each operation into its backend's calls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "contract_version",
+    "operation",
+    "headers"
+  ],
+  "properties": {
+    "contract": {
+      "const": "ekka.backend"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "operation": {
+      "$ref": "#/$defs/operation"
+    },
+    "name": {
+      "$ref": "#/$defs/name",
+      "description": "The `{name}` value of the route: the desk's name."
+    },
+    "provider": {
+      "$ref": "#/$defs/name",
+      "description": "The `{provider}` value of the route: a provider's name."
+    },
+    "headers": {
+      "$ref": "#/$defs/headers"
+    },
+    "body": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "create"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/create_body"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "name"
+              ]
+            },
+            {
+              "required": [
+                "provider"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": [
+              "delete",
+              "stop",
+              "start",
+              "status",
+              "policy_get"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "name"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "body"
+              ]
+            },
+            {
+              "required": [
+                "provider"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "policy_set"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "name",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/policy_set_body"
+          }
+        },
+        "not": {
+          "required": [
+            "provider"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "provider_detach"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "name",
+          "provider",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/provider_detach_body"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "provider_connect"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "name"
+              ]
+            },
+            {
+              "required": [
+                "provider"
+              ]
+            },
+            {
+              "required": [
+                "body"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "operation": {
+      "enum": [
+        "create",
+        "delete",
+        "stop",
+        "start",
+        "status",
+        "policy_get",
+        "policy_set",
+        "provider_detach",
+        "provider_connect"
+      ],
+      "description": "Eight operations, and `provider_connect`, which is reserved: it is part of the vocabulary and answers refused, code NOT_AVAILABLE, in v1."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "resource_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$",
+      "description": "The backend's version of a desk's configuration, as the adapter last read it. A change that names one is applied only if the desk is still at that version, so two admins never overwrite each other."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x-ekka-gate-token",
+        "authorization",
+        "x-ekka-operation-id",
+        "x-ekka-backend-contract"
+      ],
+      "description": "Header names in lowercase, as HTTP compares them. The API gate adds all four on every call to the adapter, and a plan cannot set any of them.",
+      "properties": {
+        "x-ekka-gate-token": {
+          "type": "string",
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "description": "Base64 of the Govern-signed gate token (governance/gate-token.schema.json) for exactly this call: organization, API-gate instance, resource `apis/desks`, operation and expiry. Its `scope.contract` is `ekka.gate.api.v1`, the API gate's contract that Govern signs; the backend protocol is never in the token, it is `x-ekka-backend-contract`. The grant's limits are under `constraints.grant`, checked against governance/grant-constraints/desks.v1.schema.json; `constraints.body_sha256` beside it pins this call's body. Verified offline against Govern's published `gate_token` key. Never logged."
+        },
+        "authorization": {
+          "type": "string",
+          "maxLength": 8192,
+          "pattern": "^Bearer [!-~]+$",
+          "description": "The backend's administration credential, placed by the organization in the Enclave's vault and injected by the API gate on each call. The adapter keeps no credential at rest. Never logged."
+        },
+        "x-ekka-operation-id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[a-zA-Z][a-zA-Z0-9_-]{0,63}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "`<run id>/<step id>/<task id>`: the fully qualified execution identity. Govern mints a fresh task id for every execution of an operation, so two operations that each hold a step with the same id, a new visit of a looping operation and a workflow retry all get distinct ids, while a redelivery of the same task keeps its id. The adapter records it with a digest of the request before it calls the backend: the same id with the same request answers the recorded outcome with `delivery: duplicate`, and the same id with a different request is refused OPERATION_ID_REUSED. Its run id must equal the token's."
+        },
+        "x-ekka-backend-contract": {
+          "const": "ekka.backend.v1",
+          "description": "The backend protocol this call speaks. Read from this header, never from the token. An adapter refuses a call naming a protocol it does not serve."
+        }
+      }
+    },
+    "create_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "image",
+        "policy",
+        "providers"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "image": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^([a-z0-9][a-z0-9._/:-]{0,255}@)?sha256:[0-9a-f]{64}$",
+          "description": "The image by digest, never a tag, in one of two forms. `<name>@sha256:<64 hex>`: an image from a registry, by its registry digest. `sha256:<64 hex>` alone: an image the machine built itself, by its local content ID (Docker's image ID, `docker image inspect --format '{{.Id}}'`), which the backend uses as it is and never pulls. The two are different hashes of one image, so a registry digest never matches a content ID. The digest (after `@`, or the whole value) must be in the limits' `image_digests`; hex is lowercase and exactly 64 characters."
+        },
+        "policy": {
+          "type": "object",
+          "description": "The desk's starting network policy, in the backend's own form, which the adapter's driver reads. Its digest, computed by the adapter, must be in the limits' `policy_digests`, and every host it allows must be inside `allowed_hosts`."
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/name"
+          },
+          "description": "Providers to attach, each in the limits' `providers`, with its configuration matching `provider_config_digests`."
+        },
+        "environment": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "description": "Plain environment values. Each name must be in the limits' `environment_keys`. Never a secret: a provider carries secrets."
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 0,
+          "description": "Not used, and kept only so an older caller's empty value is not refused. A repository reaches a desk through a setup plan run on the desk, never through create. A non-empty value is refused FIELD_NOT_ALLOWED; absent or empty is the same."
+        }
+      }
+    },
+    "policy_set_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "expected_resource_version"
+      ],
+      "properties": {
+        "policy": {
+          "type": "object",
+          "description": "The whole resulting policy, in the backend's own form. Every host it allows must be inside the limits' `allowed_hosts`."
+        },
+        "expected_resource_version": {
+          "$ref": "#/$defs/resource_version"
+        }
+      }
+    },
+    "provider_detach_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_resource_version"
+      ],
+      "properties": {
+        "expected_resource_version": {
+          "$ref": "#/$defs/resource_version"
+        }
+      }
+    },
+    "code": {
+      "enum": [
+        "TOKEN_MISSING",
+        "TOKEN_INVALID",
+        "TOKEN_EXPIRED",
+        "TOKEN_REPLAYED",
+        "TOKEN_SCOPE",
+        "CREDENTIAL_MISSING",
+        "OPERATION_ID_REUSED",
+        "REQUEST_INVALID",
+        "UNKNOWN_OPERATION",
+        "NOT_AVAILABLE",
+        "CONSTRAINTS_INVALID",
+        "CONSTRAINT_IMAGE_DIGESTS",
+        "CONSTRAINT_POLICY_DIGESTS",
+        "CONSTRAINT_ALLOWED_HOSTS",
+        "CONSTRAINT_PROVIDERS",
+        "CONSTRAINT_PROVIDER_CONFIG_DIGESTS",
+        "CONSTRAINT_ENVIRONMENT_KEYS",
+        "CONSTRAINT_REPO_HOSTS",
+        "CONSTRAINT_POLICY_BASELINE",
+        "CONSTRAINT_CREDENTIAL_ENDPOINT",
+        "FIELD_NOT_ALLOWED",
+        "DESK_NOT_FOUND",
+        "DESK_EXISTS",
+        "DESK_PROVIDER_REQUIRED",
+        "DESK_BUSY",
+        "VERSION_CONFLICT",
+        "BACKEND_UNAVAILABLE",
+        "BACKEND_REFUSED",
+        "RESULT_MISMATCH",
+        "NOT_APPLIED"
+      ],
+      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the create never reached the desk; nothing was created."
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "delivery",
+        "outcome"
+      ],
+      "description": "Every answer is in this closed shape. `ready`, `refused` and `unknown` are sent with HTTP 200; `running` is sent with HTTP 202, and only when a change reaches the adapter's deadline. Both are 2xx, so the API gate reads the facts either way; a step's facts come only from a 2xx answer, by field name. The fact a plan reads is `outcome` itself, declared with enum `ready|refused|unknown`, and `desk_ready`. The enum leaves out `running` on purpose: a 202 fails the plan's fact check on arrival and the step fails closed. `delivery` says whether this answer is new or recorded, so a refusal delivered twice stays refused. `desk_ready` is written from `outcome` by the table in operations.json, and this schema refuses an answer that disagrees with it.",
+      "properties": {
+        "delivery": {
+          "enum": [
+            "first",
+            "duplicate"
+          ],
+          "description": "`first`: this call did the work. `duplicate`: this operation id was already answered, and this is the recorded answer; nothing was sent to the backend again."
+        },
+        "outcome": {
+          "enum": [
+            "ready",
+            "refused",
+            "unknown",
+            "running"
+          ],
+          "description": "`ready`: done, and the desk is ready. `refused`: nothing changed; `code` says why. `unknown`: the change completed or stopped (a settle marker proved it), but the resulting desk does not match the request; a person checks before any retry. `running`: the change reached the adapter's deadline and is not finished; only ever an HTTP 202, carrying `operation_id`. The next `status` of that desk reconciles it."
+        },
+        "desk_ready": {
+          "type": "boolean"
+        },
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "backend_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "The backend's id for the desk. It stays on the customer's machine: a plan declares no fact for it."
+        },
+        "resource_version": {
+          "$ref": "#/$defs/resource_version"
+        },
+        "policy_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "providers_digest": {
+          "$ref": "#/$defs/digest",
+          "description": "On `status`: EKKA's digest of the desk's providers, computed by the adapter over the gateway's provider records, so the Enclave can re-pin after a governed disconnect."
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/name"
+          }
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "On `running` only: the operation still in progress, as the adapter's request id for it, a lowercase hyphenated UUID. It is the id the desk's lock names and the id `ekka desk release --operation` and `up.sh desks settle --operation` take; never the call's `X-EKKA-Operation-Id`, which is only the input."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "ready"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "desk_ready"
+            ],
+            "properties": {
+              "desk_ready": {
+                "const": true
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "code"
+                  ]
+                },
+                {
+                  "required": [
+                    "operation_id"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "refused"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "desk_ready",
+              "code"
+            ],
+            "properties": {
+              "desk_ready": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "operation_id"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "desk_ready"
+            ],
+            "properties": {
+              "desk_ready": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "operation_id"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "running"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "operation_id"
+            ],
+            "properties": {
+              "delivery": {
+                "const": "first"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "desk_ready"
+                  ]
+                },
+                {
+                  "required": [
+                    "code"
+                  ]
+                },
+                {
+                  "required": [
+                    "backend_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "resource_version"
+                  ]
+                },
+                {
+                  "required": [
+                    "policy_digest"
+                  ]
+                },
+                {
+                  "required": [
+                    "providers_digest"
+                  ]
+                },
+                {
+                  "required": [
+                    "providers"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

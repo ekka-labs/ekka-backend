@@ -1,0 +1,22 @@
+{
+  "description": "The operations of ekka.backend v1 and the one HTTP route each is served on, over the adapter's Unix socket. The API gate calls a route; the adapter answers in the closed result shape of backend-v1.schema.json. `body` names the request body definition in that schema, or null when the route takes no body. A `reserved` operation is part of the vocabulary and always answers refused with code NOT_AVAILABLE in v1. `{name}` is the desk's name. `route_codes` lists codes only that route answers. `outcome_table` is the one table from an answer's `outcome` to what a plan reads: the fact IS the outcome, and the adapter writes `desk_ready` by this table whatever the `delivery`, and answers with `http_status`; the schema refuses an answer that disagrees with it. `reaches_a_plan` false means a plan declares `outcome` without that value, so such an answer fails the step.",
+  "contract": "ekka.backend",
+  "contract_version": 1,
+  "operations": [
+    {"operation": "create", "method": "POST", "path": "/v1/desks", "body": "create_body", "mutates": true, "reserved": false},
+    {"operation": "delete", "method": "DELETE", "path": "/v1/desks/{name}", "body": null, "mutates": true, "reserved": false},
+    {"operation": "stop", "method": "POST", "path": "/v1/desks/{name}/stop", "body": null, "mutates": true, "reserved": false},
+    {"operation": "start", "method": "POST", "path": "/v1/desks/{name}/start", "body": null, "mutates": true, "reserved": false},
+    {"operation": "status", "method": "GET", "path": "/v1/desks/{name}", "body": null, "mutates": false, "reserved": false},
+    {"operation": "policy_get", "method": "GET", "path": "/v1/desks/{name}/policy", "body": null, "mutates": false, "reserved": false},
+    {"operation": "policy_set", "method": "PUT", "path": "/v1/desks/{name}/policy", "body": "policy_set_body", "mutates": true, "reserved": false},
+    {"operation": "provider_detach", "method": "DELETE", "path": "/v1/desks/{name}/providers/{provider}", "body": "provider_detach_body", "mutates": true, "reserved": false, "route_codes": ["DESK_PROVIDER_REQUIRED"]},
+    {"operation": "provider_connect", "method": "POST", "path": "/v1/providers", "body": null, "mutates": true, "reserved": true}
+  ],
+  "outcome_table": [
+    {"outcome": "ready", "desk_ready": true, "reaches_a_plan": true, "http_status": 200},
+    {"outcome": "refused", "desk_ready": false, "reaches_a_plan": true, "http_status": 200},
+    {"outcome": "unknown", "desk_ready": false, "reaches_a_plan": true, "http_status": 200},
+    {"outcome": "running", "reaches_a_plan": false, "http_status": 202}
+  ]
+}

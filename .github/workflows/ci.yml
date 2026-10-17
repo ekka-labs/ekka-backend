@@ -1,0 +1,127 @@
+name: ci
+
+# Every pull request and every push to main. Nothing here publishes.
+#
+# The image job proves the release mechanics without a release: it builds the
+# image, pushes it to a registry that lives only inside the job, signs it and
+# attaches an SBOM attestation with a THROWAWAY key made in the job, then
+# verifies both. Keyless signing is the release's alone: it writes an entry to
+# Sigstore's public transparency log, which a pull request must not do.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      # rust-toolchain.toml pins the toolchain; rustup on the runner installs it.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0  # v2.8.0
+      # NVIDIA OpenShell's .proto files, vendored byte for byte at one commit.
+      - run: bash ci/openshell-proto-is-vendored.sh "$PWD"
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  public-words:
+    # This repository is public: no file or commit message may carry internal
+    # links, plan or ticket ids, reviewer or agent names, or private names, and
+    # its prose and messages use the desk words and the house style. The private
+    # names come from a repository secret, so this file does not publish them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0  # every commit message is checked
+      - name: No secrets, in the tree or its history
+        # The gitleaks CLI, not the GitHub action: the action wants a paid license for organizations.
+        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f detect --source /repo --no-banner --redact
+      - run: bash ci/public-words.test.sh
+      - run: bash ci/public-words.sh "$PWD"
+        env:
+          PUBLIC_WORDS_PRIVATE: ${{ secrets.PUBLIC_WORDS_PRIVATE }}
+      - run: bash ci/public-words.sh --commits "$PWD"
+        env:
+          PUBLIC_WORDS_PRIVATE: ${{ secrets.PUBLIC_WORDS_PRIVATE }}
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25  # v2.1.1 (cargo-deny 0.20.2)
+        with:
+          command: check bans licenses sources advisories
+
+  notices:
+    # THIRD-PARTY-NOTICES.md is generated from Cargo.lock; a dependency added
+    # without regenerating it fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - run: cargo install cargo-about --locked --features cli --version 0.9.1
+      - run: cargo about generate --manifest-path crates/ekka-backend/Cargo.toml dist/templates/notices.hbs -o THIRD-PARTY-NOTICES.md
+      - run: git diff --exit-code -- THIRD-PARTY-NOTICES.md
+
+  image:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        ports: ["5000:5000"]
+    env:
+      IMAGE: localhost:5000/ekka-backend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        with:
+          cosign-release: 'v2.4.1'
+      - name: Build and push to the job's own registry
+        id: build
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 -t "$IMAGE:ci" .
+          docker push "$IMAGE:ci"
+          digest="$(docker buildx imagetools inspect "$IMAGE:ci" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$digest" == sha256:* ]] || { echo "::error::no digest for $IMAGE:ci"; exit 1; }
+          echo "ref=$IMAGE@$digest" >> "$GITHUB_OUTPUT"
+      - name: The image answers --version with the version and the contract
+        env:
+          REF: ${{ steps.build.outputs.ref }}
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm "$REF" --version)"
+          echo "$out"
+          version="$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+          [[ "$out" == "ekka-backend $version (contract ekka.backend.v1)" ]]
+      - uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c  # v0.20.5
+        with:
+          image: ${{ steps.build.outputs.ref }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - name: Sign, attest and verify with a throwaway key
+        env:
+          COSIGN_PASSWORD: ""
+          REF: ${{ steps.build.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cosign generate-key-pair
+          ref="$REF"
+          cosign sign --yes --key cosign.key --tlog-upload=false --allow-insecure-registry "$ref"
+          cosign attest --yes --key cosign.key --tlog-upload=false --allow-insecure-registry \
+            --type spdxjson --predicate sbom.spdx.json "$ref"
+          cosign verify --key cosign.pub --insecure-ignore-tlog --allow-insecure-registry "$ref" > /dev/null
+          cosign verify-attestation --key cosign.pub --insecure-ignore-tlog --allow-insecure-registry \
+            --type spdxjson "$ref" > /dev/null
+          echo "signed, attested and verified: $ref"

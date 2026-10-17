@@ -1,0 +1,54 @@
+# cargo-deny policy for the desk backend adapter. Run in CI on every change:
+#   cargo deny check bans licenses sources advisories
+#
+# about.toml's `accepted` license list must stay equal to the one here: this
+# file is the policy, about.toml writes the notices.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked  = "deny"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+[licenses]
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "Zlib",
+  "0BSD",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards         = "deny"
+# A workspace path dependency has no version; it is our own crate (publish = false).
+allow-wildcard-paths = true
+# The adapter loads no code at run time and keeps no database: its state is
+# files under its own data directory.
+deny = [
+  { name = "libloading" },
+  { name = "dlopen" },
+  { name = "dlopen2" },
+  { name = "abi_stable" },
+  { name = "sqlx" },
+  { name = "diesel" },
+  { name = "tokio-postgres" },
+  { name = "redis" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git      = "deny"
+allow-registry   = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,7 @@
+{
+  "claimed": true,
+  "required_providers": [
+    "claude-code",
+    "github"
+  ]
+}

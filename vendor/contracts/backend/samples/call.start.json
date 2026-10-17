@@ -1,0 +1,12 @@
+{
+  "contract": "ekka.backend",
+  "contract_version": 1,
+  "operation": "start",
+  "name": "code-desk",
+  "headers": {
+    "x-ekka-gate-token": "eyJzY2hlbWEiOiAiZWtrYS5zaWduZWRfZ2F0ZV90b2tlbi52MSIsICJub3RlIjogImZpeHR1cmUsIG5vdCBhIHJlYWwgdG9rZW4ifQ==",
+    "authorization": "Bearer fixture-credential-not-real",
+    "x-ekka-operation-id": "0b3d5f7a-1c2e-4a6b-8d9f-0e1a2b3c4d5e/admin/5c1e9a2b-7d3f-4e8a-9b0c-1d2e3f4a5b6c",
+    "x-ekka-backend-contract": "ekka.backend.v1"
+  }
+}

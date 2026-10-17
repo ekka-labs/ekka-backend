@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/backend/adapter-config.v1.schema.json",
+  "title": "BackendAdapterConfig",
+  "description": "The backend adapter's one configuration file, read once at start from `--config` (the kit installs it at `/etc/ekka-backend/config.json`, read-only to the adapter). It names who the adapter serves and which keys and gateway it trusts. It holds NO credential of any kind: the gateway credential stays in the Enclave's vault and arrives with each call through the API gate. Unknown fields are refused, at every level.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "config_version",
+    "organization_id",
+    "api_gate_instance",
+    "govern_keys",
+    "backend_gateway"
+  ],
+  "properties": {
+    "config_version": {
+      "const": 1,
+      "description": "This file's format. 1 is the only version."
+    },
+    "organization_id": {
+      "$ref": "#/$defs/uuid",
+      "description": "The organization whose desks this adapter administers. A gate token for any other organization is refused."
+    },
+    "api_gate_instance": {
+      "type": "string",
+      "pattern": "^enclave[0-9a-f]{8}Api$",
+      "description": "The Enclave's own API-gate instance the adapter accepts calls through: `enclave` + the first 8 hex digits of the Enclave's node id + `Api`, as the runner names it (`gate_report::local_instance_id`), for example `enclave8e1d5a6aApi`. A token naming any other instance is refused."
+    },
+    "govern_keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "description": "Govern's gate-token verify keys, copied from `GET /govern/.well-known/ekka-configuration` (the `verify_keys` entry with purpose `gate_token`). Two only while a key rotates. A token is verified against the key whose `key_id` equals its `kid` exactly; a token whose `kid` names neither is refused.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key_id",
+          "public_key_b64"
+        ],
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "pattern": "^[!-~]{1,128}$",
+            "description": "The key's `kid` as Govern publishes it, for example `govern-gate-token-v1`."
+          },
+          "public_key_b64": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$",
+            "description": "The raw 32-byte Ed25519 public key, standard base64: exactly 44 characters ending in one `=`."
+          }
+        }
+      }
+    },
+    "backend_gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "url",
+        "client_id",
+        "workspace",
+        "issuer"
+      ],
+      "description": "The desk backend's gateway the adapter administers.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$",
+          "description": "The gateway's origin, https only, no path."
+        },
+        "client_id": {
+          "const": "ekka-desk-admin",
+          "description": "The adapter's sign-in client at the gateway's issuer. Its secret is never here."
+        },
+        "issuer": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)*$",
+          "not": {
+            "pattern": "/\\.\\.?(/|$)"
+          },
+          "description": "The sign-in service that issues the gateway's tokens, exactly as the gateway checks a token's `iss` (a kit install: `https://<public name>/realms/ekka-desks`). https, no user, query, fragment or trailing slash. The adapter reads its discovery document and refuses to start unless the document names this issuer exactly and its token endpoint is on the same origin, so the client credential is never sent anywhere else. Pinned by the kit at install, never learned from the gateway."
+        },
+        "workspace": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$",
+          "description": "The gateway workspace that holds the organization's desks."
+        },
+        "ca_pem_path": {
+          "$ref": "#/$defs/absolute_path",
+          "description": "A CA bundle to trust for the gateway, when it is not publicly trusted (a kit install's own CA)."
+        }
+      }
+    },
+    "deadline_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 149,
+      "default": 120,
+      "description": "How long one change may take before the adapter answers `running`. Below the API gate's 150-second call limit, so the adapter always answers first."
+    },
+    "socket_path": {
+      "$ref": "#/$defs/absolute_path",
+      "default": "/run/ekka-backend/backend.sock",
+      "description": "The Unix socket the adapter listens on."
+    },
+    "state_dir": {
+      "$ref": "#/$defs/absolute_path",
+      "default": "/var/lib/ekka-backend",
+      "description": "Where the adapter keeps its operation records and reads settle markers."
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "absolute_path": {
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^(/[A-Za-z0-9_.-]+)+$",
+      "not": {
+        "pattern": "(^|/)\\.\\.?(/|$)"
+      }
+    }
+  }
+}

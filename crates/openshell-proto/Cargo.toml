@@ -1,0 +1,28 @@
+[package]
+name                 = "openshell-proto"
+description          = "NVIDIA OpenShell's gRPC types, generated from its .proto files vendored at a pinned commit"
+version.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+license.workspace    = true
+authors.workspace    = true
+repository.workspace = true
+publish              = false
+
+[dependencies]
+prost       = { workspace = true }
+prost-types = { workspace = true }
+tonic       = { workspace = true }
+tonic-prost = { workspace = true }
+
+[build-dependencies]
+prost             = { workspace = true }
+protox            = { workspace = true }
+tonic-prost-build = { workspace = true }
+
+[dev-dependencies]
+prost-reflect = { workspace = true }
+serde_json    = { workspace = true }
+
+[lints]
+workspace = true

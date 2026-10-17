@@ -1,0 +1,6 @@
+{
+  "delivery": "duplicate",
+  "outcome": "refused",
+  "desk_ready": false,
+  "code": "CONSTRAINT_IMAGE_DIGESTS"
+}

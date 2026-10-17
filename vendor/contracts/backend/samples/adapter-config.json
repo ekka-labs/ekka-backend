@@ -1,0 +1,21 @@
+{
+  "config_version": 1,
+  "organization_id": "7c1e2a3b-4d5e-4f60-8a71-92b3c4d5e6f7",
+  "api_gate_instance": "enclave1a2b3c4dApi",
+  "govern_keys": [
+    {
+      "key_id": "govern-gate-token-v1",
+      "public_key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    }
+  ],
+  "backend_gateway": {
+    "url": "https://host.openshell.internal:8080",
+    "client_id": "ekka-desk-admin",
+    "workspace": "desks",
+    "issuer": "https://desks.example.com/realms/ekka-desks",
+    "ca_pem_path": "/etc/ekka-backend/ca.pem"
+  },
+  "deadline_seconds": 120,
+  "socket_path": "/run/ekka-backend/backend.sock",
+  "state_dir": "/var/lib/ekka-backend"
+}
