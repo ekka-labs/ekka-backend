@@ -27,11 +27,19 @@ fi
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DEST="$ROOT/vendor/contracts"
 PIN="$DEST/CONTRACTS_PIN"
+# A link above the files too: `cd` and `find` follow it, so vendor/ or vendor/contracts as a link to another copy
+# would be checked in place of this repository's own.
+for top in "$ROOT/vendor" "$DEST"; do
+  if [ -L "$top" ]; then
+    echo "contracts-pinned: ${top#"$ROOT"/} is a symbolic link; it must be a real folder in this repository" >&2
+    exit 1
+  fi
+done
 [ -f "$PIN" ] || { echo "contracts-pinned: $PIN is missing; run scripts/vendor-contracts.sh <tag> <checkout>" >&2; exit 1; }
 links=$(cd "$DEST" && find . -type l | sed 's|^\./||' | LC_ALL=C sort)
 if [ -n "$links" ]; then
   echo "contracts-pinned: vendor/contracts holds a symbolic link; contract files are plain files:" >&2
-  printf '  %s\n' $links >&2
+  printf '%s\n' "$links" | sed 's/^/  /' >&2
   echo "contracts-pinned: re-run scripts/vendor-contracts.sh <tag> <checkout>" >&2
   exit 1
 fi
