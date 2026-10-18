@@ -365,7 +365,8 @@ impl Recovery {
     /// The marker for `rec`, checked against it: its operation, desk, backend
     /// id and gateway; a restart AFTER the change was last sent (one before
     /// fences nothing sent after it); a quiet window that ends after the
-    /// restart and has ended; and no container still restarting or removing.
+    /// restart and has ended; and no container still created (never started),
+    /// restarting or removing.
     async fn fence(
         &self,
         b: &Backend,
@@ -424,10 +425,7 @@ impl Recovery {
             || !m.containers.iter().all(|c| {
                 c.id.len() == 64
                     && c.id.bytes().all(|x| matches!(x, b'0'..=b'9' | b'a'..=b'f'))
-                    && matches!(
-                        c.state.as_str(),
-                        "created" | "running" | "paused" | "exited" | "dead"
-                    )
+                    && matches!(c.state.as_str(), "running" | "paused" | "exited" | "dead")
             })
         {
             return Fence::Refused("a container is not settled");

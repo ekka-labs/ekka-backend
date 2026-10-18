@@ -437,6 +437,11 @@ async fn a_marker_that_is_not_for_this_change_on_this_machine_is_refused() {
             "a container restarting",
             Box::new(|m| m["containers"][0]["state"] = json!("restarting")),
         ),
+        // Created and never started: something may still start it.
+        (
+            "a container created",
+            Box::new(|m| m["containers"][0]["state"] = json!("created")),
+        ),
         (
             "a short container id",
             Box::new(|m| m["containers"][0]["id"] = json!("abc")),
