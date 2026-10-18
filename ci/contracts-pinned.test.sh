@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # contracts-pinned.test: the check passes this repository's vendored copy, and
 # fails on each way the copy can stop being the released one: an edited file,
-# an extra file (a stray temporary pin among them), a missing file, a pin that
-# names no version.
+# an extra file (a stray temporary pin among them), a missing file, a symbolic
+# link (to a file outside, or one that copies a pinned file's bytes), a pin
+# that names no version.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CHECK="$HERE/contracts-pinned.sh"
@@ -25,6 +26,8 @@ case_ "an edited file fails"                  1 "printf ' ' >> backend/settle-ma
 case_ "an extra file fails"                   1 "printf '{}' > backend/extra.json"
 case_ "a stray temporary pin fails"           1 "cp CONTRACTS_PIN CONTRACTS_PIN.tmp"
 case_ "a missing file fails"                  1 "rm backend/settle-marker.v1.schema.json"
+case_ "a link to a file outside fails"        1 "ln -s /etc/hosts backend/hosts.json"
+case_ "a link in place of a pinned file fails" 1 "cp backend/settle-marker.v1.schema.json ../m.json && rm backend/settle-marker.v1.schema.json && ln -s ../../m.json backend/settle-marker.v1.schema.json"
 case_ "a pin that names no version fails"     1 "sed -i.bak '1s/.*/contracts main/' CONTRACTS_PIN && rm CONTRACTS_PIN.bak"
 case_ "no pin at all fails"                   1 "rm CONTRACTS_PIN"
 

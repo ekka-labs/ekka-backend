@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # contracts-pinned: vendor/contracts holds exactly the files CONTRACTS_PIN lists,
-# each with the sha256 it records, under a `contracts vX.Y.Z` header. The
+# each with the sha256 it records, under a `contracts vX.Y.Z` header, and no
+# symbolic link: contract files are plain files, and a link is never listed by
+# content, so it could point anywhere and still pass. The
 # gitleaks allowlist and the adapter's sync tests both rely on this copy being
 # the released one, so a hand edit, an extra file or a missing one fails here.
 #
@@ -26,6 +28,13 @@ ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DEST="$ROOT/vendor/contracts"
 PIN="$DEST/CONTRACTS_PIN"
 [ -f "$PIN" ] || { echo "contracts-pinned: $PIN is missing; run scripts/vendor-contracts.sh <tag> <checkout>" >&2; exit 1; }
+links=$(cd "$DEST" && find . -type l | sed 's|^\./||' | LC_ALL=C sort)
+if [ -n "$links" ]; then
+  echo "contracts-pinned: vendor/contracts holds a symbolic link; contract files are plain files:" >&2
+  printf '  %s\n' $links >&2
+  echo "contracts-pinned: re-run scripts/vendor-contracts.sh <tag> <checkout>" >&2
+  exit 1
+fi
 head -1 "$PIN" | grep -Eq '^contracts v[0-9]+\.[0-9]+\.[0-9]+$' \
   || { echo "contracts-pinned: the first line of CONTRACTS_PIN is not 'contracts vX.Y.Z'" >&2; exit 1; }
 want=$(tail -n +3 "$PIN")
