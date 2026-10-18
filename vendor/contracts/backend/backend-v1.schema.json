@@ -360,7 +360,7 @@
         "RESULT_MISMATCH",
         "NOT_APPLIED"
       ],
-      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the create never reached the desk; nothing was created."
+      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the change never reached the desk; nothing changed."
     },
     "result": {
       "type": "object",

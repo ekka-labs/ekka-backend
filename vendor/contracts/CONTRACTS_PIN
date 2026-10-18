@@ -1,7 +1,7 @@
-contracts v0.67.0
+contracts v0.67.1
 Copied unchanged by scripts/vendor-contracts.sh. Do not hand-edit these files.
 791b989aaf0028c9005a62de2a2b89f855b6cb403e616d4d8ecb9eaf419b453a  backend/adapter-config.v1.schema.json
-ff8f0b2b4e29292b9fb6a033031e3cbf07e51f9d3f4fde76a787c1961421f11d  backend/backend-v1.schema.json
+7b32085fc76d0391c4c285d0c6a7fb1b74cfcb224d7beffdc96917f85339ddcc  backend/backend-v1.schema.json
 687a6e714b06c9ec4b24f3712846b658994234bfd2e4fe4db657bb2ec1270da6  backend/desk-claim.v1.schema.json
 da34c5a9fe283e6b4a5ad5b2fe0bb8eb13c79a48c3bce8a55e37f9efef68fcf5  backend/operations.json
 3203e9c7fdb63b4a4cc91d78122b0474e928e5c5e15f6dacaad3194c4227ed07  backend/samples/adapter-config.json
@@ -38,7 +38,7 @@ cfe877d1da5d7981d9b082a668d1263b4ca3b6a018f4ff313b641e2ee28eb2aa  backend/sample
 0cca38a6bda756710076cf1c36223aba2f4aaa463174c55878b251f0de0b7e63  backend/samples/settle-marker.create-absent.json
 ff6620074338539528708fc0a02ac6b26de7b1568cf86846f997072c19e99f41  backend/samples/settle-marker.json
 d40204a2fa44cebf80c42506d61363ac34e5319c9c69a652a390aa5b2e8e8e2c  backend/settle-hold.v1.schema.json
-649be8e314e3e32cba4f351dbf245e3037bd279238f0d9f976994b853f12b280  backend/settle-marker.v1.schema.json
+afb6b55d23d4b109bbaeafadb64161105243027693a0a24470e6cf4aff67abf0  backend/settle-marker.v1.schema.json
 610db087a15b434ab444180ebf694a5d135a8a5f6eacc5975730532be0c5aaa4  governance/gate-token.schema.json
 5dd06ee2ae7e0bcc75d09202a6dcca138991b66df729c918fa76d74e7fb20ac1  governance/grant-constraints/desks.v1.schema.json
 f327d5cfbacc55a4ad23199f7ba4e3d772acae76c4a7ab4e63fd26e7f3404848  governance/grant-constraints/samples/desks.v1.json

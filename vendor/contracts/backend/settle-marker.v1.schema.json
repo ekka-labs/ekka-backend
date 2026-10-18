@@ -81,7 +81,7 @@
               "exited",
               "dead"
             ],
-            "description": "Docker's state. `restarting` and `removing` are never settled: the procedure writes no marker while one is."
+            "description": "Docker's state. `created`, `restarting` and `removing` are never settled: the procedure writes no marker while one is."
           }
         }
       }
