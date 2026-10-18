@@ -217,7 +217,7 @@ The adapter takes each running change through these rules, in order:
    - it names another operation, desk, backend id or desk backend (`<url>#<workspace>` from the adapter's config, byte for byte);
    - its desk backend restart is not after the change was LAST SENT (its admission, or its latest re-issue). The record notes each send before it goes, so no send can still be inside the desk backend when a marker releases the desk;
    - its quiet window has not ended, or does not end after the restart;
-   - it names a container still `restarting` or `removing`;
+   - it names a container still `created` (never started), `restarting` or `removing`. A container that stays `created` keeps its change running and its desk held until the container starts or is removed; then the desk is settled again;
    - the file is not the adapter's user's, is not mode 0600, or is a link.
 
    A marker sends nothing, so it needs no stored token: a Govern key rotated since never holds a settled desk.
