@@ -17,13 +17,15 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 git -C "$SRC" archive "$REF" -- backend governance/grant-constraints governance/gate-token.schema.json | tar -x -C "$DEST"
 rm -f "$DEST/backend/README.md"
-sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -c1-64; else shasum -a 256 | cut -c1-64; fi; }
+# The listing is ci/contracts-pinned.sh's, so writing the pin and checking it can never disagree. It is built
+# outside vendor/contracts: a temporary file inside would be listed as one of the contract's own.
+PIN_TMP=$(mktemp)
+trap 'rm -f "$PIN_TMP"' EXIT
 {
   echo "contracts $REF"
   echo "Copied unchanged by scripts/vendor-contracts.sh. Do not hand-edit these files."
-  (cd "$DEST" && find . -type f ! -name CONTRACTS_PIN | sed 's|^\./||' | LC_ALL=C sort | while read -r f; do
-    printf '%s  %s\n' "$(sha < "$f")" "$f"
-  done)
-} > "$DEST/CONTRACTS_PIN.tmp"
-mv "$DEST/CONTRACTS_PIN.tmp" "$DEST/CONTRACTS_PIN"
+  bash "$ROOT/ci/contracts-pinned.sh" --list "$DEST"
+} > "$PIN_TMP"
+mv "$PIN_TMP" "$DEST/CONTRACTS_PIN"
+bash "$ROOT/ci/contracts-pinned.sh" "$ROOT"
 echo "vendored the contract files the adapter reads, at $REF"
