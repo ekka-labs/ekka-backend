@@ -550,6 +550,62 @@ async fn a_payload_mismatch_on_reissue_stays_running_and_claimed() {
     assert!(r.held(DESK));
 }
 
+/// A RE-ISSUE that is refused never settles the change. The
+/// original stop lost its reply; its re-issue is refused before OpenShell
+/// looks the original up (who asks, then the target), so the refusal says
+/// nothing about the original. NotFound too: an original delete that ran
+/// would answer it. The change stays running and its desk held until a
+/// success the read-back confirms.
+#[tokio::test]
+async fn a_reissue_refused_before_the_replay_lookup_keeps_the_change_running_and_held() {
+    let r = rig().await;
+    r.w.gw
+        .lock()
+        .unwrap()
+        .lose_reply
+        .insert("StopSandbox".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Running);
+    r.w.gw.lock().unwrap().lose_reply.clear();
+    let refused_sends = || {
+        r.w.gw
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|c| c.starts_with("StopSandbox (planted"))
+            .count()
+    };
+    for (n, code) in [
+        (2, tonic::Code::Unauthenticated),
+        (3, tonic::Code::PermissionDenied),
+        (4, tonic::Code::NotFound),
+    ] {
+        r.w.gw.lock().unwrap().faults.answer.insert(
+            "StopSandbox".into(),
+            ekka_backend_fakegw::faults::Planted::Refused { code, reason: None },
+        );
+        let before = refused_sends();
+        let s = r.status(DESK, n).await;
+        assert_eq!(
+            refused_sends(),
+            before + 1,
+            "{code:?}: it was re-issued and refused"
+        );
+        assert_eq!(
+            (s.outcome, s.operation_id.clone()),
+            (Outcome::Running, Some(rid(1))),
+            "{code:?}"
+        );
+        assert_eq!(r.state(&rid(1)), State::Running, "{code:?}: not settled");
+        assert!(r.held(DESK), "{code:?}: the desk stays held");
+    }
+    // The gateway answers again: the replayed success settles it.
+    r.w.gw.lock().unwrap().faults.answer.clear();
+    assert_eq!(r.status(DESK, 5).await.outcome, Outcome::Ready);
+    assert_eq!(r.answer_of(&rid(1)).outcome, Outcome::Ready);
+    assert!(!r.held(DESK), "released with the confirmed outcome");
+}
+
 /// Kill points. BEFORE the call (the gateway never saw it): the re-issue
 /// carries it out. AFTER the write (the reply lost): the re-issue replays.
 /// (The third, during re-pin, is the Enclave's, tested there.)

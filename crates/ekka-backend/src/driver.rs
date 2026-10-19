@@ -90,16 +90,41 @@ pub trait Notes: Send + Sync {
     /// check passed, right before the gateway call. A record with no send
     /// noted was never sent, so recovery never re-issues it.
     fn sending(&self) -> bool;
+    /// Whether this send RE-ISSUES a change sent before. OpenShell checks who
+    /// asks and finds the target BEFORE it looks up the original
+    /// (`mutation_replay.rs` at e1f3c82, lines 150-170), so a refusal of a
+    /// re-issue says nothing about the original.
+    fn reissue(&self) -> bool {
+        false
+    }
 }
 
-/// For a re-issue or a read-back: recovery noted the send itself.
+/// In tests: a FIRST send whose every note succeeds.
+#[cfg(test)]
 pub struct Noted;
 
+#[cfg(test)]
 impl Notes for Noted {
     fn backend_id(&self, _: &str) -> bool {
         true
     }
     fn sending(&self) -> bool {
+        true
+    }
+}
+
+/// A RE-ISSUE: recovery noted the send itself, and a refusal keeps the
+/// change running (see [`Notes::reissue`]).
+pub struct Reissued;
+
+impl Notes for Reissued {
+    fn backend_id(&self, _: &str) -> bool {
+        true
+    }
+    fn sending(&self) -> bool {
+        true
+    }
+    fn reissue(&self) -> bool {
         true
     }
 }
@@ -281,7 +306,26 @@ impl Backend {
     /// What a gateway refusal of a CHANGE answers. A change that may still
     /// finish answers `running` and keeps its claim; one the gateway decided
     /// against releases it `refused`.
-    async fn change_failed(&self, a: &Admitted, desk: &str, e: GatewayError) -> Answer {
+    ///
+    /// A RE-ISSUE is never refused: whatever the gateway answers, NotFound
+    /// included (the original delete may have succeeded), it was decided
+    /// before the original was looked up. Only a success the read-back
+    /// confirms settles a re-issue; until then the change stays running and
+    /// its desk held.
+    async fn change_failed(
+        &self,
+        a: &Admitted,
+        desk: &str,
+        e: GatewayError,
+        reissue: bool,
+    ) -> Answer {
+        if reissue {
+            if matches!(e, GatewayError::Unauthenticated) {
+                self.tokens.rejected();
+            }
+            tracing::warn!(request_id = %a.verified().request_id, desk, error = ?e, "reissueRefusedDeskKept");
+            return Answer::running(&a.verified().request_id);
+        }
         let code = match e {
             GatewayError::Unavailable
             | GatewayError::Uncertain
@@ -498,7 +542,7 @@ impl Backend {
             };
             let msg = Self::create_request(body, policy, &a.verified().request_id);
             if let Err(e) = self.gateway.create(bearer, msg).await {
-                return self.change_failed(a, name, e).await;
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let read = self.settle(bearer, name, |d| d.is_some()).await;
@@ -570,7 +614,7 @@ impl Backend {
                 .delete(bearer, name, &a.verified().request_id)
                 .await
             {
-                return self.change_failed(a, name, e).await;
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         match self.settle(bearer, name, |d| d.is_none()).await {
@@ -634,7 +678,7 @@ impl Backend {
                 .stop_or_start(bearer, name, &a.verified().request_id, start)
                 .await
             {
-                return self.change_failed(a, name, e).await;
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let want = if start {
@@ -728,7 +772,7 @@ impl Backend {
                 .set_policy(bearer, name, policy, expected, &a.verified().request_id)
                 .await
             {
-                return self.change_failed(a, name, e).await;
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let read = self
@@ -802,7 +846,7 @@ impl Backend {
                 .detach(bearer, name, provider, expected, &a.verified().request_id)
                 .await
             {
-                return self.change_failed(a, name, e).await;
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let gone = |f: &DeskFacts| {
@@ -890,7 +934,7 @@ impl Backend {
         backend_id: Option<&str>,
         resend: bool,
     ) -> Answer {
-        let send: Option<&dyn Notes> = resend.then_some(&Noted);
+        let send: Option<&dyn Notes> = resend.then_some(&Reissued);
         use crate::routes::Operation;
         let bearer = match self.bearer(a).await {
             Ok(b) => b,
