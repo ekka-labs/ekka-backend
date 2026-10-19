@@ -144,6 +144,7 @@ pub(crate) async fn answer(
             let notes = RecordNotes {
                 recovery,
                 request_id: &request_id,
+                reissue: false,
             };
             dispatch(b, &notes, route, &a, body).await
         }
@@ -167,10 +168,15 @@ pub(crate) async fn answer(
     answer
 }
 
-/// A change's notes, written to its record before the driver acts.
-struct RecordNotes<'a> {
-    recovery: &'a Recovery,
-    request_id: &'a str,
+/// A change's notes, written to its record before the driver acts. A send
+/// is BRACKETED: its start right before the gateway call, its end right
+/// after, both durable, with this process's boot id.
+pub(crate) struct RecordNotes<'a> {
+    pub(crate) recovery: &'a Recovery,
+    pub(crate) request_id: &'a str,
+    /// A re-issue: a refusal, or a send that cannot be noted, keeps the
+    /// change running (`Notes::reissue`).
+    pub(crate) reissue: bool,
 }
 
 impl Notes for RecordNotes<'_> {
@@ -184,8 +190,23 @@ impl Notes for RecordNotes<'_> {
     fn sending(&self) -> bool {
         self.recovery
             .store()
-            .note_sent(self.request_id, self.recovery.now())
+            .note_sent(self.request_id, self.recovery.now(), self.recovery.boot())
             .is_ok()
+    }
+
+    fn sent(&self) {
+        if let Err(e) = self
+            .recovery
+            .store()
+            .note_send_ended(self.request_id, self.recovery.now())
+        {
+            // Left in flight: no marker counts for it while this process runs.
+            tracing::error!(request_id = self.request_id, error = ?e, "sendEndNotNoted");
+        }
+    }
+
+    fn reissue(&self) -> bool {
+        self.reissue
     }
 }
 

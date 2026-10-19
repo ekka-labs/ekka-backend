@@ -90,6 +90,10 @@ pub trait Notes: Send + Sync {
     /// check passed, right before the gateway call. A record with no send
     /// noted was never sent, so recovery never re-issues it.
     fn sending(&self) -> bool;
+    /// That the gateway call `sending` preceded has RETURNED, whatever it
+    /// answered: the send's end, noted right after it. A start with no end
+    /// is in flight, and no settle marker counts for it.
+    fn sent(&self) {}
     /// Whether this send RE-ISSUES a change sent before. OpenShell checks who
     /// asks and finds the target BEFORE it looks up the original
     /// (`mutation_replay.rs` at e1f3c82, lines 150-170), so a refusal of a
@@ -109,22 +113,6 @@ impl Notes for Noted {
         true
     }
     fn sending(&self) -> bool {
-        true
-    }
-}
-
-/// A RE-ISSUE: recovery noted the send itself, and a refusal keeps the
-/// change running (see [`Notes::reissue`]).
-pub struct Reissued;
-
-impl Notes for Reissued {
-    fn backend_id(&self, _: &str) -> bool {
-        true
-    }
-    fn sending(&self) -> bool {
-        true
-    }
-    fn reissue(&self) -> bool {
         true
     }
 }
@@ -301,6 +289,16 @@ impl Backend {
     async fn refuse_claimed(&self, a: &Admitted, desk: &str, code: Code) -> Answer {
         self.conclude(a, desk, Outcome::Refused, None, refused(code))
             .await
+    }
+
+    /// A send that could not be noted is not sent. A first send is refused,
+    /// its claim freed; a RE-ISSUE stays running, its desk held (the
+    /// original may have run).
+    async fn not_noted(&self, a: &Admitted, desk: &str, notes: &dyn Notes) -> Answer {
+        if notes.reissue() {
+            return Answer::running(&a.verified().request_id);
+        }
+        self.refuse_claimed(a, desk, Code::BackendUnavailable).await
     }
 
     /// What a gateway refusal of a CHANGE answers. A change that may still
@@ -533,15 +531,17 @@ impl Backend {
         // `None`: a read-back only (a settle marker said the change stopped),
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
-            if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
-            }
             // A re-issue whose policy cannot be rebuilt is not sent.
             let Some(policy) = policy else {
                 return Answer::running(&a.verified().request_id);
             };
             let msg = Self::create_request(body, policy, &a.verified().request_id);
-            if let Err(e) = self.gateway.create(bearer, msg).await {
+            if !notes.sending() {
+                return self.not_noted(a, name, notes).await;
+            }
+            let sent = self.gateway.create(bearer, msg).await;
+            notes.sent();
+            if let Err(e) = sent {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
@@ -607,13 +607,14 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .delete(bearer, name, &a.verified().request_id)
-                .await
-            {
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
@@ -671,13 +672,14 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .stop_or_start(bearer, name, &a.verified().request_id, start)
-                .await
-            {
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
@@ -765,13 +767,14 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .set_policy(bearer, name, policy, expected, &a.verified().request_id)
-                .await
-            {
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
@@ -839,13 +842,14 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .detach(bearer, name, provider, expected, &a.verified().request_id)
-                .await
-            {
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
@@ -890,16 +894,18 @@ impl Backend {
     /// own request id, so the gateway replays its recorded success (or
     /// answers UNCERTAIN) and never applies it twice. `a` comes from the
     /// stored token, re-checked (`Admitted::for_recovery`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn reissue(
         &self,
         a: &Admitted,
+        notes: &dyn Notes,
         operation: crate::routes::Operation,
         desk: &str,
         provider: Option<&str>,
         body: &[u8],
         backend_id: Option<&str>,
     ) -> Answer {
-        self.recover(a, operation, desk, provider, body, backend_id, true)
+        self.recover(a, operation, desk, provider, body, backend_id, Some(notes))
             .await
     }
 
@@ -915,7 +921,7 @@ impl Backend {
         body: &[u8],
         backend_id: Option<&str>,
     ) -> Answer {
-        self.recover(a, operation, desk, provider, body, backend_id, false)
+        self.recover(a, operation, desk, provider, body, backend_id, None)
             .await
     }
 
@@ -932,9 +938,8 @@ impl Backend {
         provider: Option<&str>,
         body: &[u8],
         backend_id: Option<&str>,
-        resend: bool,
+        send: Option<&dyn Notes>,
     ) -> Answer {
-        let send: Option<&dyn Notes> = resend.then_some(&Reissued);
         use crate::routes::Operation;
         let bearer = match self.bearer(a).await {
             Ok(b) => b,

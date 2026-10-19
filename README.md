@@ -215,7 +215,7 @@ The adapter takes each running change through these rules, in order:
 
 2. **A settle marker for it** means the change has stopped. Nothing is sent: the read-back alone decides, `ready` or `unknown`, and the claim is released. The adapter refuses a marker when:
    - it names another operation, desk, backend id or desk backend (`<url>#<workspace>` from the adapter's config, byte for byte);
-   - its desk backend restart is not after the change was LAST SENT (its admission, or its latest re-issue). The record notes each send before it goes, so no send can still be inside the desk backend when a marker releases the desk;
+   - its desk backend restart is not after the change's last send ENDED. The record notes each send's start right before it goes and its end right after it returns, with the adapter process that sent it. A send with no end is still in flight: no marker counts for it while that process runs, and after the adapter restarts, only a desk backend restart after the new adapter started counts. So no send can still be inside the desk backend when a marker releases the desk;
    - its quiet window has not ended, or does not end after the restart;
    - it names a container still `created` (never started), `restarting` or `removing`. A container that stays `created` keeps its change running and its desk held until the container starts or is removed; then the desk is settled again;
    - the file is not the adapter's user's, is not mode 0600, or is a link.

@@ -944,6 +944,114 @@ async fn a_hold_then_a_status_then_a_marker_settles_the_change() {
     assert!(!hold.exists() && hold.with_extension("hold.used").exists());
 }
 
+/// NO SEND CROSSES A SETTLE. A re-issue is in flight (its reply held, then
+/// lost) while the kit holds the change, restarts the gateway and writes its
+/// marker. The send ENDED after that restart, so the marker is refused and
+/// the desk stays held; a later restart, after the send ended, settles it.
+#[tokio::test]
+async fn a_reissue_in_flight_across_a_hold_and_a_restart_never_lets_that_marker_count() {
+    let r = rig().await;
+    r.w.gw
+        .lock()
+        .unwrap()
+        .lose_reply
+        .insert("StopSandbox".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Running);
+    {
+        let mut gw = r.w.gw.lock().unwrap();
+        gw.lose_reply.clear();
+        gw.faults
+            .delay
+            .insert("StopSandbox".into(), std::time::Duration::from_millis(400));
+        gw.faults.drop_reply.insert("StopSandbox".into());
+    }
+    let (during, ()) = tokio::join!(r.status(DESK, 2), async {
+        // The re-issue has started; it ends only after all of this.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        r.hold(&rid(1), |_| {});
+        // 01:00:30: the gateway restarted at 01:00, the marker is written.
+        r.advance(Duration::seconds(50 * 60 + 30));
+        r.marker(&rid(1), DESK, |_| {});
+    });
+    assert_eq!(during.outcome, Outcome::Running, "{during:?}");
+    {
+        let mut gw = r.w.gw.lock().unwrap();
+        gw.faults.delay.clear();
+        gw.faults.drop_reply.clear();
+    }
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert!(
+        rec.last_send_ended_at.as_deref() > Some("2026-10-15T01:00:00Z"),
+        "the re-issue ended after the restart: {rec:?}"
+    );
+    // 01:02, the quiet window over: the marker is refused, nothing is sent
+    // while the hold stands, and the desk stays held.
+    r.advance(Duration::seconds(90));
+    let sends = r.sent("StopSandbox").len();
+    assert_eq!(r.status(DESK, 3).await.outcome, Outcome::Running);
+    assert_eq!(r.sent("StopSandbox").len(), sends, "held: not re-issued");
+    assert_eq!(r.state(&rid(1)), State::Running);
+    assert!(r.held(DESK), "the marker did not count");
+    // A restart after the send ended counts.
+    let marker = r.marker(&rid(1), DESK, |m| {
+        m["gateway_restarted_at"] = json!("2026-10-15T01:03:00Z");
+        m["quiet_until"] = json!("2026-10-15T01:04:30Z");
+    });
+    r.advance(Duration::minutes(3));
+    assert_eq!(r.status(DESK, 4).await.outcome, Outcome::Ready);
+    assert!(!r.held(DESK));
+    assert!(marker.with_extension("json.used").exists());
+}
+
+/// A send whose end was never noted (its end note failed, or its process
+/// died during it): while THIS adapter runs it is in flight, and no marker
+/// counts. After the adapter restarts, it counts only for a gateway
+/// restarted after the new adapter started.
+#[tokio::test]
+async fn a_send_with_no_end_holds_every_marker_until_the_adapter_and_then_the_gateway_restart() {
+    let mut r = rig().await;
+    uncertain_stop(&r, DESK, 1).await;
+    // Started in this process, never ended.
+    let started = *r.clock.lock().unwrap();
+    r.r.store().note_sent(&rid(1), started, r.r.boot()).unwrap();
+    r.hold(&rid(1), |_| {});
+    r.marker(&rid(1), DESK, |_| {});
+    r.advance(Duration::minutes(52));
+    assert_eq!(r.status(DESK, 2).await.outcome, Outcome::Running);
+    assert!(r.held(DESK), "in flight in this adapter: refused");
+    // A new adapter at 01:02. The 01:00 restart came before it started, when
+    // the old process may still have been sending: refused.
+    r.restart();
+    assert_eq!(r.status(DESK, 3).await.outcome, Outcome::Running);
+    assert!(
+        r.held(DESK),
+        "the gateway restarted before this adapter started"
+    );
+    // The gateway restarts after the new adapter started: it counts.
+    r.marker(&rid(1), DESK, |m| {
+        m["gateway_restarted_at"] = json!("2026-10-15T01:03:00Z");
+        m["quiet_until"] = json!("2026-10-15T01:04:30Z");
+    });
+    r.advance(Duration::minutes(3));
+    assert_eq!(r.status(DESK, 4).await.outcome, Outcome::Ready);
+    assert!(!r.held(DESK));
+}
+
+/// Every send is bracketed in its record: its start, the process that sent
+/// it, and its end.
+#[tokio::test]
+async fn a_first_send_notes_its_start_its_process_and_its_end() {
+    let r = rig().await;
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert_eq!(rec.last_send_boot.as_deref(), Some(r.r.boot()));
+    assert!(rec.last_sent_at.is_some());
+    assert!(rec.last_send_ended_at >= rec.last_sent_at, "{rec:?}");
+    assert_eq!(r.r.boot().len(), 32);
+    let other = rig().await;
+    assert_ne!(other.r.boot(), r.r.boot(), "a boot id is never reused");
+}
+
 /// An unsafe or wrong hold counts as none (logged): the re-issue happens.
 #[tokio::test]
 async fn an_unsafe_or_wrong_hold_is_ignored() {

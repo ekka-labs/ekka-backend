@@ -60,11 +60,22 @@ pub struct Record {
     pub operation_id_header: String,
     /// When it was admitted, RFC 3339 UTC.
     pub admitted_at: String,
-    /// When it was last sent, RFC 3339 UTC: written, durably, BEFORE each
-    /// send (the first is its admission). A settle marker counts only for a
-    /// gateway restarted after this, so no send of it can be in the gateway.
+    /// When its latest send STARTED, RFC 3339 UTC: written, durably,
+    /// immediately before the gateway call, with nothing awaited between.
+    /// None means it was never sent.
     #[serde(default)]
     pub last_sent_at: Option<String>,
+    /// The adapter process that started that send: random per process
+    /// start, never reused.
+    #[serde(default)]
+    pub last_send_boot: Option<String>,
+    /// When that send ENDED (the gateway call returned, whatever it
+    /// answered), RFC 3339 UTC. A start with no end after it is a send still
+    /// in flight, or one whose process died during it. A settle marker
+    /// counts only for a gateway restarted after the send ended, or, when it
+    /// never ended, after the process that sent it was gone.
+    #[serde(default)]
+    pub last_send_ended_at: Option<String>,
     pub state: State,
     /// The backend's id for the desk, written before a change whose
     /// read-back must name it (a delete: once the desk is gone it cannot be
@@ -274,7 +285,9 @@ impl Store {
         self.replace(&rec)
     }
 
-    /// Note that `request_id` is being sent again, at `at`, BEFORE it is.
+    /// Note that `request_id`'s send STARTS, at `at`, in process `boot`,
+    /// immediately BEFORE the gateway call. Its end is cleared: the send is
+    /// in flight until [`Store::note_send_ended`].
     ///
     /// # Errors
     /// The record is missing or the write fails: then it is not sent.
@@ -282,6 +295,7 @@ impl Store {
         &self,
         request_id: &str,
         at: chrono::DateTime<chrono::Utc>,
+        boot: &str,
     ) -> Result<(), StoreError> {
         let mut rec = self
             .get(request_id)?
@@ -289,6 +303,26 @@ impl Store {
         // Full precision: a restart in the same second, before the send,
         // must not pass for one after it.
         rec.last_sent_at = Some(at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true));
+        rec.last_send_boot = Some(boot.to_string());
+        rec.last_send_ended_at = None;
+        self.replace(&rec)
+    }
+
+    /// Note that `request_id`'s send ENDED, at `at`: the gateway call
+    /// returned, whatever it answered.
+    ///
+    /// # Errors
+    /// The record is missing or the write fails: the send then stays in
+    /// flight, so no marker counts for it while this process runs.
+    pub fn note_send_ended(
+        &self,
+        request_id: &str,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), StoreError> {
+        let mut rec = self
+            .get(request_id)?
+            .ok_or_else(|| StoreError::Io("no record".into()))?;
+        rec.last_send_ended_at = Some(at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true));
         self.replace(&rec)
     }
 
@@ -368,6 +402,8 @@ pub fn running(
         // Noted by the driver before the first send, after its claim and
         // every check: none means it was never sent.
         last_sent_at: None,
+        last_send_boot: None,
+        last_send_ended_at: None,
         state: State::Running,
         backend_id: None,
         answer: None,

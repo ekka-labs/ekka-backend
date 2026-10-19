@@ -132,6 +132,13 @@ pub struct Recovery {
     /// Changes being recovered now: a second call meeting one answers it
     /// unresolved, never re-issues it beside the first.
     busy: Mutex<HashSet<String>>,
+    /// This process: random per start, never reused, written with each send
+    /// it starts. A send of THIS boot with no end is in flight.
+    boot: String,
+    /// When this process started. A send of ANOTHER boot with no end was cut
+    /// short when its process died, before this; a gateway restarted after
+    /// this cannot hold it.
+    started_at: DateTime<Utc>,
 }
 
 /// Removes its id from `busy` when dropped.
@@ -175,6 +182,7 @@ impl Recovery {
                 settle_dir.display()
             ));
         }
+        let started_at = now();
         Ok(Self {
             store,
             verifier,
@@ -183,7 +191,15 @@ impl Recovery {
             uid,
             now,
             busy: Mutex::default(),
+            boot: new_boot()?,
+            started_at,
         })
+    }
+
+    /// This process's boot id (see the field).
+    #[must_use]
+    pub fn boot(&self) -> &str {
+        &self.boot
     }
 
     #[must_use]
@@ -338,16 +354,20 @@ impl Recovery {
             }
         };
         let a = Admitted::for_recovery(recovered, rid, &rec.gate_token, credential.clone());
-        // Noted durably BEFORE it is sent: a marker counts only for a gateway
-        // restarted after this, so this send can never be inside the gateway
-        // when a marker releases the desk. Not noted: not sent.
-        if let Err(e) = self.store.note_sent(rid, (self.now)()) {
-            tracing::error!(request_id = rid, error = ?e, "sendNotNoted");
-            return None;
-        }
+        // The send is BRACKETED by the driver, durably: its start right
+        // before the gateway call (after the token is in hand, nothing
+        // awaited between) and its end right after. A marker counts only once
+        // that bracket is closed before the gateway restart (`fence`), so no
+        // send of it can cross a settle. Not noted: not sent, still running.
+        let notes = crate::ops::RecordNotes {
+            recovery: self,
+            request_id: rid,
+            reissue: true,
+        };
         let answer = b
             .reissue(
                 &a,
+                &notes,
                 operation,
                 &rec.desk,
                 rec.provider.as_deref(),
@@ -363,7 +383,7 @@ impl Recovery {
     }
 
     /// The marker for `rec`, checked against it: its operation, desk, backend
-    /// id and gateway; a restart AFTER the change was last sent (one before
+    /// id and gateway; a restart AFTER the change's last send ended (one before
     /// fences nothing sent after it); a quiet window that ends after the
     /// restart and has ended; and no container still created (never started),
     /// restarting or removing.
@@ -398,21 +418,36 @@ impl Recovery {
         else {
             return Fence::Refused("a time is not RFC 3339 UTC");
         };
-        // The restart must come after the change's LAST send (its admission,
-        // or the latest re-issue): a send after the restart may still be in
-        // the gateway, and a marker would release the desk under it.
-        let last_sent = match rec
-            .last_sent_at
-            .as_deref()
-            .map(DateTime::parse_from_rfc3339)
-        {
-            Some(Ok(t)) => t.with_timezone(&Utc).max(admitted_at),
-            None => admitted_at,
-            Some(Err(_)) => return Fence::Refused("the record's last send is unreadable"),
+        // NO SEND CROSSES A SETTLE. The restart must come after the change's
+        // last send ENDED: a request the adapter gave up on may still be
+        // inside the gateway, and only a restart after it ended kills it or
+        // proves it done. A send with no end is in flight: from THIS process,
+        // no marker counts until it ends; from an earlier process, it ended
+        // when that process died, before this one started, so the restart
+        // must come after this process started.
+        let at = |v: &Option<String>| match v.as_deref().map(DateTime::parse_from_rfc3339) {
+            None => Ok(None),
+            Some(Ok(t)) => Ok(Some(t.with_timezone(&Utc))),
+            Some(Err(_)) => Err(()),
         };
-        if restarted <= last_sent {
+        let (Ok(started), Ok(ended)) = (at(&rec.last_sent_at), at(&rec.last_send_ended_at)) else {
+            return Fence::Refused("the record's last send is unreadable");
+        };
+        let after = match (started, ended) {
+            (None, _) => admitted_at,
+            (Some(s), Some(e)) if e >= s => e.max(admitted_at),
+            (Some(s), _) => {
+                if rec.last_send_boot.as_deref() == Some(self.boot.as_str()) {
+                    return Fence::Refused(
+                        "a send of the change is still in flight in this adapter",
+                    );
+                }
+                s.max(self.started_at).max(admitted_at)
+            }
+        };
+        if restarted <= after {
             return Fence::Refused(
-                "NVIDIA OpenShell's gateway restarted before the change was last sent",
+                "NVIDIA OpenShell's gateway restarted before the change's last send ended",
             );
         }
         if quiet <= restarted {
@@ -552,3 +587,14 @@ impl Recovery {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[path = "recover_tests.rs"]
 pub(crate) mod tests;
+
+/// A boot id: 16 random bytes from the operating system, as hex. Read, not
+/// derived from a clock or a process id, so no two starts share one.
+fn new_boot() -> Result<String, String> {
+    use std::io::Read as _;
+    let mut b = [0u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut b))
+        .map_err(|e| format!("BOOT_ID_UNAVAILABLE: /dev/urandom: {e}"))?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
