@@ -38,6 +38,7 @@ use crate::gateway::{Gateway, GatewayError};
 use crate::normalize::{message, message_digest, message_json, POLICY};
 use crate::providers;
 use crate::signin::{SignInError, Tokens};
+use crate::store::PendingRelease;
 use crate::token::Admitted;
 
 /// The label that marks a sandbox as an EKKA desk, and the one naming the
@@ -72,6 +73,15 @@ pub enum Records {
     /// A driver unit test: no record exists, nothing is written first.
     #[cfg(test)]
     Unrecorded,
+}
+
+/// What became of a release.
+enum Release {
+    Done,
+    /// Still owed, as it was.
+    Owed,
+    /// Still owed, now as this outcome.
+    OwedAs(Outcome),
 }
 
 /// A refusal before any change, by its code.
@@ -259,29 +269,137 @@ impl Backend {
             #[cfg(test)]
             Records::Unrecorded => None,
         };
-        if let Some(records) = records {
-            let written = records.settle(rid, &answer).or_else(|e| {
-                tracing::warn!(request_id = %rid, error = ?e, "operationSettleRetried");
-                records.settle(rid, &answer)
-            });
-            if let Err(e) = written {
-                tracing::error!(request_id = %rid, desk, error = ?e, "operationNotSettledDeskKept");
-                return Answer::running(rid);
-            }
+        let Some(records) = records else {
+            self.try_release(desk, rid, outcome, rb).await;
+            return answer;
+        };
+        // The release is OWED from the moment the answer is written, in the
+        // same write: a failed release, or a crash before it, is retried at
+        // the next call and at startup (`release_pending`), never by sending
+        // the change again.
+        let owed = PendingRelease {
+            outcome: outcome.name().to_string(),
+            read_back: rb.map(ReadBack::wire),
+        };
+        let written = records.settle_releasing(rid, &answer, &owed).or_else(|e| {
+            tracing::warn!(request_id = %rid, error = ?e, "operationSettleRetried");
+            records.settle_releasing(rid, &answer, &owed)
+        });
+        if let Err(e) = written {
+            tracing::error!(request_id = %rid, desk, error = ?e, "operationNotSettledDeskKept");
+            return Answer::running(rid);
         }
-        self.release(a, desk, outcome, rb).await;
+        self.release_owed(records, desk, rid, outcome, rb).await;
         answer
     }
 
-    /// Release the claim; a release the Enclave refuses or cannot take leaves
-    /// the desk held, which is the safe side, and the answer stands.
-    async fn release(&self, a: &Admitted, desk: &str, outcome: Outcome, rb: Option<&ReadBack>) {
-        if let Err(e) = self
-            .claims
-            .release(desk, &a.verified().request_id, outcome, rb)
-            .await
-        {
-            tracing::warn!(desk, request_id = %a.verified().request_id, error = ?e, "deskReleaseFailed");
+    /// Send the release `request_id` owes and record what became of it.
+    async fn release_owed(
+        &self,
+        records: &crate::store::Store,
+        desk: &str,
+        request_id: &str,
+        outcome: Outcome,
+        rb: Option<&ReadBack>,
+    ) {
+        let noted = match self.try_release(desk, request_id, outcome, rb).await {
+            Release::Done => records.released(request_id),
+            Release::Owed => return,
+            Release::OwedAs(o) => records.note_release(
+                request_id,
+                &PendingRelease {
+                    outcome: o.name().to_string(),
+                    read_back: None,
+                },
+            ),
+        };
+        if let Err(e) = noted {
+            tracing::warn!(request_id, desk, error = ?e, "releaseNotNoted");
+        }
+    }
+
+    /// One release, read the way a retry must read it.
+    ///
+    /// - Done: the Enclave released it, or answers that this change no longer
+    ///   holds the desk (`DESK_NOT_HELD`, `DESK_HELD_BY_ANOTHER`: an earlier
+    ///   release went through and its answer was lost).
+    /// - A refusal that a retry would only repeat (`READ_BACK_MISMATCH`,
+    ///   `READ_BACK_REQUIRED`) is released `unknown` instead: the desk stays
+    ///   held, marked for a person, and is never retried forever.
+    /// - Anything else stays owed: the desk stays held, the safe side.
+    async fn try_release(
+        &self,
+        desk: &str,
+        request_id: &str,
+        outcome: Outcome,
+        rb: Option<&ReadBack>,
+    ) -> Release {
+        match self.claims.release(desk, request_id, outcome, rb).await {
+            Ok(_) => Release::Done,
+            Err(ClaimError::Refused(code))
+                if code == "DESK_NOT_HELD" || code == "DESK_HELD_BY_ANOTHER" =>
+            {
+                tracing::info!(desk, request_id, code, "deskAlreadyReleased");
+                Release::Done
+            }
+            Err(ClaimError::Refused(code))
+                if (code == "READ_BACK_MISMATCH" || code == "READ_BACK_REQUIRED")
+                    && outcome != Outcome::Unknown =>
+            {
+                tracing::warn!(desk, request_id, code, "deskReleasedUnknownForAPerson");
+                match self
+                    .claims
+                    .release(desk, request_id, Outcome::Unknown, None)
+                    .await
+                {
+                    Ok(_) => Release::Done,
+                    Err(e) => {
+                        tracing::warn!(desk, request_id, error = ?e, "deskReleaseFailed");
+                        Release::OwedAs(Outcome::Unknown)
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(desk, request_id, error = ?e, "deskReleaseFailed");
+                Release::Owed
+            }
+        }
+    }
+
+    /// Retry every release a settled change still owes: before every call,
+    /// and at startup. Idempotent: a release that went through answers that
+    /// the change no longer holds the desk.
+    pub async fn release_pending(&self) {
+        let records = match &self.records {
+            Records::Store(store) => Some(store),
+            #[cfg(test)]
+            Records::Unrecorded => None,
+        };
+        let Some(records) = records else {
+            return;
+        };
+        let owed = match records.releasing() {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!(error = ?e, "releasingUnreadable");
+                return;
+            }
+        };
+        for rec in owed {
+            let Some(p) = rec.release_pending.as_ref() else {
+                continue;
+            };
+            let Some(outcome) = Outcome::from_name(&p.outcome) else {
+                tracing::error!(request_id = %rec.request_id, "releaseOutcomeUnreadable");
+                continue;
+            };
+            let rb = p.read_back.as_ref().and_then(ReadBack::from_wire);
+            if p.read_back.is_some() && rb.is_none() {
+                tracing::error!(request_id = %rec.request_id, "releaseReadBackUnreadable");
+                continue;
+            }
+            self.release_owed(records, &rec.desk, &rec.request_id, outcome, rb.as_ref())
+                .await;
         }
     }
 

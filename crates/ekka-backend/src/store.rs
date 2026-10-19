@@ -85,6 +85,23 @@ pub struct Record {
     /// The final answer, once settled.
     #[serde(default)]
     pub answer: Option<Answer>,
+    /// A settled change whose claim is not released yet: written WITH its
+    /// answer, cleared once the Enclave released the desk. Retried at every
+    /// call and at startup, never by sending the change again.
+    #[serde(default)]
+    pub release_pending: Option<PendingRelease>,
+}
+
+/// The release a settled change still owes the Enclave: its outcome and
+/// read-back, as the claim socket takes them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingRelease {
+    /// `ready`, `refused` or `unknown`.
+    pub outcome: String,
+    /// The read-back, in its wire form, for a `ready` release.
+    #[serde(default)]
+    pub read_back: Option<serde_json::Value>,
 }
 
 impl Record {
@@ -133,6 +150,8 @@ pub enum StoreError {
 pub struct Store {
     dir: PathBuf,
     running: PathBuf,
+    /// One empty file per settled change whose release is pending.
+    releasing: PathBuf,
     /// Tests only: this many settle writes fail.
     #[cfg(test)]
     pub(crate) fail_settles: std::sync::atomic::AtomicUsize,
@@ -152,7 +171,13 @@ impl Store {
     pub fn open(state_dir: &Path, uid: u32) -> Result<Self, String> {
         let dir = state_dir.join("operations");
         let running = state_dir.join("running");
-        for d in [state_dir, dir.as_path(), running.as_path()] {
+        let releasing = state_dir.join("releasing");
+        for d in [
+            state_dir,
+            dir.as_path(),
+            running.as_path(),
+            releasing.as_path(),
+        ] {
             if !d.exists() {
                 std::fs::DirBuilder::new()
                     .mode(0o700)
@@ -172,6 +197,7 @@ impl Store {
         Ok(Self {
             dir,
             running,
+            releasing,
             #[cfg(test)]
             fail_settles: std::sync::atomic::AtomicUsize::new(0),
         })
@@ -247,6 +273,42 @@ impl Store {
     /// # Errors
     /// The record is missing or the write fails; it then stays `running`.
     pub fn settle(&self, request_id: &str, answer: &Answer) -> Result<(), StoreError> {
+        self.settle_with(request_id, answer, None)
+    }
+
+    /// Settle `request_id` with its answer AND the release it now owes, in
+    /// one write: indexed as releasing BEFORE the record, so a crash between
+    /// the two leaves an entry with nothing owed (skipped), never a release
+    /// owed that no index names.
+    ///
+    /// # Errors
+    /// The index or the record cannot be written; it then stays `running`.
+    pub fn settle_releasing(
+        &self,
+        request_id: &str,
+        answer: &Answer,
+        release: &PendingRelease,
+    ) -> Result<(), StoreError> {
+        if !plain_id(request_id) {
+            return Err(StoreError::Io("not a request id".into()));
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(self.releasing.join(request_id))
+            .and_then(|_| std::fs::File::open(&self.releasing)?.sync_all())
+            .map_err(|e| StoreError::Io(e.to_string()))?;
+        self.settle_with(request_id, answer, Some(release))
+    }
+
+    fn settle_with(
+        &self,
+        request_id: &str,
+        answer: &Answer,
+        release: Option<&PendingRelease>,
+    ) -> Result<(), StoreError> {
         #[cfg(test)]
         {
             use std::sync::atomic::Ordering;
@@ -261,6 +323,9 @@ impl Store {
             .ok_or_else(|| StoreError::Io("no record".into()))?;
         rec.state = State::Settled;
         rec.answer = Some(answer.clone());
+        if let Some(r) = release {
+            rec.release_pending = Some(r.clone());
+        }
         self.replace(&rec)?;
         // Out of the index AFTER the record settled: a crash between the two
         // leaves an entry whose record is settled, which is skipped.
@@ -324,6 +389,68 @@ impl Store {
             .ok_or_else(|| StoreError::Io("no record".into()))?;
         rec.last_send_ended_at = Some(at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true));
         self.replace(&rec)
+    }
+
+    /// The release `request_id` owes is now `release` (a retry that must
+    /// send another outcome).
+    ///
+    /// # Errors
+    /// The record is missing or the write fails.
+    pub fn note_release(
+        &self,
+        request_id: &str,
+        release: &PendingRelease,
+    ) -> Result<(), StoreError> {
+        let mut rec = self
+            .get(request_id)?
+            .ok_or_else(|| StoreError::Io("no record".into()))?;
+        rec.release_pending = Some(release.clone());
+        self.replace(&rec)
+    }
+
+    /// `request_id`'s release is done: cleared from the record, then from
+    /// the index.
+    ///
+    /// # Errors
+    /// The record is missing or the write fails: the release stays owed,
+    /// and its retry finds the desk already released.
+    pub fn released(&self, request_id: &str) -> Result<(), StoreError> {
+        let mut rec = self
+            .get(request_id)?
+            .ok_or_else(|| StoreError::Io("no record".into()))?;
+        rec.release_pending = None;
+        self.replace(&rec)?;
+        match std::fs::remove_file(self.releasing.join(request_id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                tracing::warn!(request_id, error = %e, "releasingIndexNotCleared");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Every settled change that still owes a release, found through the
+    /// index. An entry whose record owes nothing is cleared.
+    ///
+    /// # Errors
+    /// The index cannot be read, or a record it names cannot.
+    pub fn releasing(&self) -> Result<Vec<Record>, StoreError> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(&self.releasing).map_err(|e| StoreError::Io(e.to_string()))? {
+            let e = e.map_err(|e| StoreError::Io(e.to_string()))?;
+            let id = e.file_name().to_string_lossy().to_string();
+            if !plain_id(&id) {
+                continue;
+            }
+            match self.get(&id)? {
+                Some(rec) if rec.release_pending.is_some() => out.push(rec),
+                _ => {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+        out.sort_by(|a, b| a.admitted_at.cmp(&b.admitted_at));
+        Ok(out)
     }
 
     /// Every change on `desk` still `running`, found through the index.
@@ -407,6 +534,7 @@ pub fn running(
         state: State::Running,
         backend_id: None,
         answer: None,
+        release_pending: None,
     }
 }
 

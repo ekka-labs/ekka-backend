@@ -1052,6 +1052,125 @@ async fn a_first_send_notes_its_start_its_process_and_its_end() {
     assert_ne!(other.r.boot(), r.r.boot(), "a boot id is never reused");
 }
 
+/// A SETTLED CHANGE NEVER LOCKS ITS DESK FOREVER. Its release is owed in
+/// the same write as its answer; one that fails is retried at the next call,
+/// for any desk, and the change is never sent again.
+#[tokio::test]
+async fn a_release_that_fails_is_owed_and_retried_at_the_next_call_never_resent() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(
+        r.stop(DESK, 1).await.outcome,
+        Outcome::Ready,
+        "the answer stands"
+    );
+    assert!(r.held(DESK), "the release failed: still held");
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert_eq!(rec.state, State::Settled);
+    assert_eq!(
+        rec.release_pending.as_ref().map(|p| p.outcome.as_str()),
+        Some("ready")
+    );
+    r.status("desk-elsewhere", 2).await;
+    assert!(!r.held(DESK), "released at the next call");
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert_eq!(rec.release_pending, None);
+    assert_eq!(r.sent("StopSandbox"), [rid(1)], "never sent again");
+}
+
+/// An adapter that stops between the settle and the release releases at
+/// startup, before any call.
+#[tokio::test]
+async fn a_release_still_owed_at_startup_is_sent_before_any_call() {
+    let mut r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    assert!(r.held(DESK));
+    r.restart();
+    r.w.b.release_pending().await;
+    assert!(!r.held(DESK), "released at startup");
+    assert_eq!(
+        r.r.store().get(&rid(1)).unwrap().unwrap().release_pending,
+        None
+    );
+}
+
+/// A retry after a release that went through (its answer lost): the
+/// Enclave answers DESK_NOT_HELD, which is released, not retried forever.
+#[tokio::test]
+async fn a_retried_release_the_enclave_already_took_counts_as_released() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    // The first release went through after all.
+    r.w.enc.lock().unwrap().held.remove(DESK);
+    r.status(DESK, 2).await;
+    assert_eq!(
+        r.r.store().get(&rid(1)).unwrap().unwrap().release_pending,
+        None
+    );
+    let releases =
+        r.w.enc
+            .lock()
+            .unwrap()
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "runner_desk_release")
+            .count();
+    r.status(DESK, 3).await;
+    let after =
+        r.w.enc
+            .lock()
+            .unwrap()
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "runner_desk_release")
+            .count();
+    assert_eq!(after, releases, "nothing owed: not tried again");
+}
+
+/// A refusal a retry would only repeat (the read-back does not match the
+/// desk's pins) is released UNKNOWN: the desk stays held, for a person.
+#[tokio::test]
+async fn a_release_refused_for_its_read_back_is_released_unknown_for_a_person() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("READ_BACK_MISMATCH: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    let releases: Vec<Value> =
+        r.w.enc
+            .lock()
+            .unwrap()
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "runner_desk_release")
+            .map(|(_, p)| p)
+            .collect();
+    let last = releases.last().unwrap();
+    assert_eq!(last["outcome"], "unknown", "{releases:?}");
+    assert!(last.get("read_back").is_none());
+    assert!(r.held(DESK), "held as unknown, for a person");
+    assert_eq!(
+        r.r.store().get(&rid(1)).unwrap().unwrap().release_pending,
+        None
+    );
+}
+
 /// An unsafe or wrong hold counts as none (logged): the re-issue happens.
 #[tokio::test]
 async fn an_unsafe_or_wrong_hold_is_ignored() {

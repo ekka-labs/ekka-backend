@@ -182,7 +182,9 @@ Every change follows the same order:
 5. Write the answer to the operation's record.
 6. Only then, release the claim with the outcome and the read-back.
 
-If the record cannot be written (tried twice), the claim is NOT released. The desk stays held, the change answers `running` as its record says, and recovery settles it later. A crash between the record and the release leaves a settled record and a held desk; the operator release (`ekka desk release --operation`) is for exactly that. A read takes no claim.
+If the record cannot be written (tried twice), the claim is NOT released. The desk stays held, the change answers `running` as its record says, and recovery settles it later. A read takes no claim.
+
+The release is OWED from the moment the answer is written: the record names it in the same write. A release that fails, or a crash before it, is retried before every call and at startup, and the change is never sent again. A release the Enclave already took answers that the change no longer holds the desk (`DESK_NOT_HELD`, or `DESK_HELD_BY_ANOTHER` once a job took it), which counts as released. A refusal a retry would only repeat (`READ_BACK_MISMATCH`, `READ_BACK_REQUIRED`) is released `unknown` instead: the desk stays held for a person, who releases it with `ekka desk release --operation` after reading the desk.
 
 | Operation | NVIDIA OpenShell calls | Answer |
 |---|---|---|

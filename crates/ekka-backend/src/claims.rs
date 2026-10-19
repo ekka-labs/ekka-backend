@@ -47,11 +47,21 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Ready => "ready",
             Self::Refused => "refused",
             Self::Unknown => "unknown",
+        }
+    }
+
+    /// The outcome a pending release names; `None` for anything else.
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "ready" => Some(Self::Ready),
+            "refused" => Some(Self::Refused),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
         }
     }
 }
@@ -70,7 +80,23 @@ pub enum ReadBack {
 }
 
 impl ReadBack {
-    fn wire(&self) -> Value {
+    /// The read-back a pending release kept in its wire form.
+    pub(crate) fn from_wire(v: &Value) -> Option<Self> {
+        let id = v.get("sandbox_id")?.as_str()?.to_string();
+        if v.get("deleted") == Some(&json!(true)) {
+            return Some(Self::Deleted { sandbox_id: id });
+        }
+        Some(Self::Live {
+            sandbox_id: id,
+            policy_digest: v.get("policy_digest")?.as_str()?.to_string(),
+            providers_digest: match v.get("providers_digest") {
+                None => None,
+                Some(p) => Some(p.as_str()?.to_string()),
+            },
+        })
+    }
+
+    pub(crate) fn wire(&self) -> Value {
         match self {
             Self::Live {
                 sandbox_id,

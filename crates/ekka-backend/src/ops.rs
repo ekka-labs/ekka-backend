@@ -69,6 +69,9 @@ pub(crate) async fn answer(
     verified: Verified,
     body: &Bytes,
 ) -> Answer {
+    // A settled change's release that did not go through is retried
+    // first, at every call: it never waits on a call for its own desk.
+    b.release_pending().await;
     let store = recovery.store();
     let desk = desk_of(route, body);
     if !route.operation.mutates() {

@@ -188,6 +188,8 @@ async fn run(path: PathBuf) -> Result<(), String> {
         uid,
         std::sync::Arc::new(chrono::Utc::now),
     )?);
+    // Every release a settled change still owes, before the first call.
+    driver.release_pending().await;
     let listener = socket::bind(&c.socket_path, uid)?;
     tracing::info!(socket = %c.socket_path.display(), "listening");
     server::serve(
