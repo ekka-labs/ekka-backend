@@ -664,6 +664,29 @@ impl Backend {
             }
         }
         let read = self.settle(bearer, name, |d| d.is_some()).await;
+        // WHAT WAS APPROVED, not only what was asked for. The policy the
+        // desk LOADED must be the approved one (the grant pinned this digest
+        // at admission); not loaded yet is still running. And each
+        // provider's configuration, read again now the desk exists, must be
+        // the one the grant pins: one changed while the desk was made never
+        // finishes as approved. A read-back with no grant (a settle marker)
+        // cannot confirm the providers: `unknown`, the desk held.
+        let approved_policy = crate::digest_cmd::policy_digest(&body.policy);
+        let providers_ok = match &read {
+            Ok(Some(Some(_))) => {
+                let pins = enforce::grant(a.verified().grant.as_ref())
+                    .ok()
+                    .map(|g| g.provider_config_digests);
+                self.providers_still_approved(bearer, &body.providers, pins.as_ref())
+                    .await
+            }
+            _ => Ok(false),
+        };
+        let (read, providers_ok) = match providers_ok {
+            Ok(ok) => (read, ok),
+            // The providers could not be read: still running, claim kept.
+            Err(e) => (Err(e), false),
+        };
         let expected = enforce::Expected {
             image: &body.image,
             policy: &body.policy,
@@ -673,18 +696,47 @@ impl Backend {
             a,
             name,
             read,
-            |sb, _| {
+            |sb, facts| {
                 let json = message_json(crate::normalize::SANDBOX, sb).unwrap_or(Value::Null);
                 enforce::result_matches(&expected, &json)
                     && sb.metadata.as_ref().is_some_and(|m| {
                         m.labels.get(OPERATION_LABEL) == Some(&a.verified().request_id)
                     })
+                    && providers_ok
+                    && (facts.policy_digest.is_none() || facts.policy_digest == approved_policy)
             },
             false,
             bearer,
             send.is_none(),
         )
         .await
+    }
+
+    /// Whether each of `names` holds, at the gateway now, the configuration
+    /// `pins` approves. No pins (a read-back with no grant), a provider
+    /// gone, or one changed: `false`. A read that fails: the error, so the
+    /// change stays running.
+    async fn providers_still_approved(
+        &self,
+        bearer: &str,
+        names: &[String],
+        pins: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> Result<bool, GatewayError> {
+        let Some(pins) = pins else {
+            return Ok(false);
+        };
+        for p in names {
+            let now = match providers::read(&self.gateway, bearer, p).await {
+                Ok((rec, prof)) => providers::config_digest(p, &rec, &prof).ok(),
+                Err((GatewayError::NotFound, _)) => None,
+                Err((e, _)) => return Err(e),
+            };
+            if now.is_none() || now.as_ref() != pins.get(p) {
+                tracing::warn!(provider = %p, "providerChangedDuringCreate");
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// `delete`. The desk's id is read first and handed to `note` (the

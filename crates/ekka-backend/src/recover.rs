@@ -316,9 +316,25 @@ impl Recovery {
         let reader = Admitted::for_read_back(rid, &rec.operation_id_header, credential.clone());
         match self.fence(b, &reader, rec, admitted_at).await {
             Fence::Stopped => {
+                // Still sends nothing. A create's read-back checks the
+                // providers against the grant's pins, so the stored token is
+                // re-checked (never consumed) to read its grant; if it no
+                // longer verifies (a Govern key rotated since), the read-back
+                // has no grant and a create ends `unknown`, never `ready`.
+                let granted = self
+                    .verifier
+                    .verify_stored(
+                        &rec.gate_token,
+                        operation,
+                        &rec.operation_id_header,
+                        &body,
+                        admitted_at,
+                    )
+                    .ok()
+                    .map(|r| Admitted::for_recovery(r, rid, &rec.gate_token, credential.clone()));
                 let answer = b
                     .read_back(
-                        &reader,
+                        granted.as_ref().unwrap_or(&reader),
                         operation,
                         &rec.desk,
                         rec.provider.as_deref(),
