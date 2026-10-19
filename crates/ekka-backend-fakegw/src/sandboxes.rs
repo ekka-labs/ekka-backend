@@ -140,6 +140,22 @@ fn record(s: &mut State, rpc: &str, ws: &str, name: &str, request_id: &str) {
     }
 }
 
+/// Every sandbox whose delete has run its course is gone now.
+fn reap(s: &mut State) {
+    let now = std::time::Instant::now();
+    let gone: Vec<String> = s
+        .vanishing
+        .iter()
+        .filter(|(_, at)| **at <= now)
+        .map(|(n, _)| n.clone())
+        .collect();
+    for n in gone {
+        s.vanishing.remove(&n);
+        s.sandboxes.remove(&n);
+        s.revisions.remove(&n);
+    }
+}
+
 fn phase(sb: &mut Sandbox, p: SandboxPhase) {
     sb.status.get_or_insert_with(SandboxStatus::default).phase = p as i32;
 }
@@ -190,6 +206,10 @@ pub fn create(
         .and_then(|x| x.policy.clone())
         .unwrap_or_default();
     s.revisions.insert(q.name.clone(), vec![policy]);
+    if let Some(n) = s.create_loads_on_read {
+        s.loading.insert(q.name.clone());
+        s.reads_until_loaded.insert(q.name.clone(), n);
+    }
     s.sandboxes.insert(q.name, sb.clone());
     reply(
         &mut s,
@@ -211,6 +231,7 @@ pub fn get(
     let q = r.into_inner();
     let ws = workspace(q.workspace_scope.as_ref());
     let mut s = st.lock().unwrap();
+    reap(&mut s);
     s.calls.push(format!("GetSandbox {ws}/{}", q.name));
     if s.empty_get.contains(&q.name) {
         return Ok(Response::new(SandboxResponse::default()));
@@ -237,11 +258,27 @@ pub fn delete(
     if let Some(r) = replayed(&s, "DeleteSandbox", &q.request_id, &payload) {
         return r;
     }
-    let Some(sb) = s.sandboxes.remove(&q.name) else {
-        return Err(Status::not_found("no such sandbox"));
+    reap(&mut s);
+    let id = if let Some(takes) = s.delete_takes {
+        // Accepted; the sandbox stays readable until it is gone.
+        let Some(sb) = s.sandboxes.get(&q.name) else {
+            return Err(Status::not_found("no such sandbox"));
+        };
+        let id = sb
+            .metadata
+            .as_ref()
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        let at = std::time::Instant::now() + takes;
+        s.vanishing.entry(q.name.clone()).or_insert(at);
+        id
+    } else {
+        let Some(sb) = s.sandboxes.remove(&q.name) else {
+            return Err(Status::not_found("no such sandbox"));
+        };
+        s.revisions.remove(&q.name);
+        sb.metadata.map(|m| m.id).unwrap_or_default()
     };
-    s.revisions.remove(&q.name);
-    let id = sb.metadata.map(|m| m.id).unwrap_or_default();
     reply(
         &mut s,
         "DeleteSandbox",
@@ -378,8 +415,28 @@ pub fn policy_status(
     let q = r.into_inner();
     let ws = workspace(q.workspace_scope.as_ref());
     let mut s = st.lock().unwrap();
+    reap(&mut s);
     s.calls
         .push(format!("GetSandboxPolicyStatus {ws}/{}", q.sandbox));
+    if let Some((left, code)) = s.fail_policy_reads {
+        if left > 0 {
+            s.fail_policy_reads = Some((left - 1, code));
+            return Err(Status::new(code, "not yet"));
+        }
+    }
+    if let Some(code) = s.policy_error_while_deleting {
+        if s.vanishing.contains_key(&q.sandbox) {
+            return Err(Status::new(code, "being deleted"));
+        }
+    }
+    // A policy that loads on a later read: count this read.
+    if let Some(left) = s.reads_until_loaded.get_mut(&q.sandbox) {
+        *left = left.saturating_sub(1);
+        if *left == 0 {
+            s.reads_until_loaded.remove(&q.sandbox);
+            s.loading.remove(&q.sandbox);
+        }
+    }
     let Some(revs) = s.revisions.get(&q.sandbox) else {
         return Err(Status::not_found("no such sandbox"));
     };

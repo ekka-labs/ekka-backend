@@ -275,8 +275,12 @@ impl std::fmt::Debug for Verified {
 }
 
 /// A NEW operation, admitted: its token is consumed, and only this executes.
+/// A new admission keeps the moment it was admitted: how long its change is
+/// read back is measured from there ([`crate::driver::settle_window`]). A
+/// read-back or a recovery keeps none: it runs inside ANOTHER call, often a
+/// read, which must not wait out a window that is not its own.
 #[derive(Debug)]
-pub struct Admitted(Verified);
+pub struct Admitted(Verified, Option<tokio::time::Instant>);
 
 impl Verified {
     /// Admit this call as a new operation: consume its token, refusing one
@@ -299,7 +303,7 @@ impl Verified {
         self.replay.consume(&self.token_id, self.expires)?;
         *g = GateState::Admitted;
         drop(g);
-        Ok(Admitted(self))
+        Ok(Admitted(self, Some(tokio::time::Instant::now())))
     }
 
     /// The call's gate, which the server closes at the deadline.
@@ -345,27 +349,37 @@ impl Admitted {
         &self.0
     }
 
+    /// When this call admitted the operation; `None` for a read-back or a
+    /// recovery, carried out inside another call.
+    #[must_use]
+    pub fn admitted_at(&self) -> Option<tokio::time::Instant> {
+        self.1
+    }
+
     /// A STORED operation's admission for a READ-BACK only (a settle marker
     /// settles it): no token, no grant, its request id and the CURRENT call's
     /// credential, to read the desk and release its claim. The driver takes
     /// it only in `Backend::read_back` and `not_applied`, which send nothing.
     #[must_use]
     pub fn for_read_back(request_id: &str, operation_id: &str, credential: Credential) -> Self {
-        Self(Verified {
-            token_id: String::new(),
-            run_id: String::new(),
-            operation_id: operation_id.to_string(),
-            request_id: request_id.to_string(),
-            grant: None,
-            credential,
-            gate_token: String::new(),
-            expires: Utc::now(),
-            replay: Arc::new(Replay {
-                now: Arc::new(Utc::now),
-                seen: Mutex::new(HashMap::new()),
-            }),
-            gate: Arc::default(),
-        })
+        Self(
+            Verified {
+                token_id: String::new(),
+                run_id: String::new(),
+                operation_id: operation_id.to_string(),
+                request_id: request_id.to_string(),
+                grant: None,
+                credential,
+                gate_token: String::new(),
+                expires: Utc::now(),
+                replay: Arc::new(Replay {
+                    now: Arc::new(Utc::now),
+                    seen: Mutex::new(HashMap::new()),
+                }),
+                gate: Arc::default(),
+            },
+            None,
+        )
     }
 
     /// A STORED operation, carried out again on recovery: its token
@@ -380,21 +394,24 @@ impl Admitted {
         gate_token: &str,
         credential: Credential,
     ) -> Self {
-        Self(Verified {
-            token_id: r.token_id,
-            run_id: r.run_id,
-            operation_id: r.operation_id,
-            request_id: request_id.to_string(),
-            grant: r.grant,
-            credential,
-            gate_token: gate_token.to_string(),
-            expires: Utc::now(),
-            replay: Arc::new(Replay {
-                now: Arc::new(Utc::now),
-                seen: Mutex::new(HashMap::new()),
-            }),
-            gate: Arc::default(),
-        })
+        Self(
+            Verified {
+                token_id: r.token_id,
+                run_id: r.run_id,
+                operation_id: r.operation_id,
+                request_id: request_id.to_string(),
+                grant: r.grant,
+                credential,
+                gate_token: gate_token.to_string(),
+                expires: Utc::now(),
+                replay: Arc::new(Replay {
+                    now: Arc::new(Utc::now),
+                    seen: Mutex::new(HashMap::new()),
+                }),
+                gate: Arc::default(),
+            },
+            None,
+        )
     }
 }
 

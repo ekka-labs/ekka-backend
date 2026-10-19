@@ -1544,3 +1544,40 @@ async fn the_record_is_settled_before_the_claim_is_released() {
     assert_eq!(rec["state"], "settled", "{rec}");
     assert_eq!(rec["answer"]["outcome"], "ready");
 }
+
+/// A RECOVERY RUNS INSIDE ANOTHER CALL, here a `status`, which must not wait
+/// out a window that is not its own: a re-issued change that never settles
+/// (a delete the gateway never finishes) is read back for the short window
+/// after its send and answers, never for the whole deadline less margin. The
+/// desk stays held and the change running.
+#[tokio::test]
+async fn a_recovery_of_a_change_that_never_settles_answers_within_the_short_window() {
+    let mut r = rig().await;
+    // A call's own window, far longer than the recovery may take.
+    r.w.b.settle_for = std::time::Duration::from_secs(60);
+    {
+        let mut g = r.w.gw.lock().unwrap();
+        g.delete_takes = Some(std::time::Duration::from_secs(3600));
+        g.lose_reply.insert("DeleteSandbox".into());
+    }
+    let first = r
+        .call(Operation::Delete, DESK, 1, b"", &signed(1, "write", None))
+        .await;
+    assert_eq!(first.outcome, Outcome::Running, "{first:?}");
+    r.w.gw.lock().unwrap().lose_reply.clear();
+    let started = std::time::Instant::now();
+    r.status(DESK, 2).await;
+    let took = started.elapsed();
+    assert_eq!(
+        r.sent_for("DeleteSandbox", &rid(1)).len(),
+        2,
+        "re-issued once"
+    );
+    assert!(took < std::time::Duration::from_secs(10), "waited {took:?}");
+    assert!(
+        took >= std::time::Duration::from_millis(4_500),
+        "read back after the re-issue: {took:?}"
+    );
+    assert_eq!(r.state(&rid(1)), State::Running);
+    assert!(r.held(DESK));
+}

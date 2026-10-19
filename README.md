@@ -178,7 +178,7 @@ Every change follows the same order:
 1. Sign in with the call's credential.
 2. Claim the desk at the Enclave.
 3. Make the desk backend call, with the operation's request id as NVIDIA OpenShell's `request_id`.
-4. Read the desk back.
+4. Read the desk back until the change shows: a create when the desk exists AND its policy is loaded, a delete when the desk is gone, the others as the table says. Reads go on for `deadline_seconds` less 10 s (at most half of it) from when the call was admitted, and for at least 5 s after the send. A read that answers an error is read again: NVIDIA OpenShell answers one right after a create and while a desk is removed. A refused token ends the reads at once. When the reads end before the change shows, it answers `running` and the desk stays held. A change recovered inside another call is read back for 5 s.
 5. Write the answer to the operation's record.
 6. Only then, release the claim with the outcome and the read-back.
 

@@ -179,6 +179,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
         claims: claims::Claims::beside(&c.socket_path, uid),
         // A change's answer is written here before its claim is released.
         records: driver::Records::Store(store.clone()),
+        settle_for: driver::settle_window(Duration::from_secs(c.deadline_seconds)),
     });
     let verifier = std::sync::Arc::new(token::Verifier::new(c, Box::new(chrono::Utc::now))?);
     // Recovery of a change still running, and its settle markers.

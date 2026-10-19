@@ -48,7 +48,10 @@ jobs:
           fetch-depth: 0  # every commit message is checked
       - name: No secrets, in the tree or its history
         # The gitleaks CLI, not the GitHub action: the action wants a paid license for organizations.
-        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f detect --source /repo --no-banner --redact
+        # `--log-opts=HEAD`: every commit reachable from HEAD, the same commits the message check reads. By default
+        # gitleaks reads `git log --all`, and with fetch-depth 0 that is every branch fetched, including history
+        # this commit does not contain.
+        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f detect --source /repo --no-banner --redact --log-opts=HEAD
       - run: bash ci/public-words.test.sh
       - run: bash ci/public-words.sh "$PWD"
         env:

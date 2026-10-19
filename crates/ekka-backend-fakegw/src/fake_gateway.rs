@@ -45,6 +45,22 @@ pub struct State {
     pub revisions: BTreeMap<String, Vec<openshell_proto::openshell::sandbox::v1::SandboxPolicy>>,
     /// Sandboxes whose newest revision is stored but not loaded yet.
     pub loading: std::collections::BTreeSet<String>,
+    /// A created sandbox's policy loads only on this policy read (the 3rd:
+    /// `Some(3)`), as a real gateway loads it a moment after the sandbox
+    /// exists. `None`: loaded at once.
+    pub create_loads_on_read: Option<usize>,
+    /// For each sandbox still loading so, the policy reads left until it loads.
+    pub reads_until_loaded: BTreeMap<String, usize>,
+    /// A delete is accepted, and the sandbox stays readable this long before
+    /// it is gone. `None`: gone at once.
+    pub delete_takes: Option<std::time::Duration>,
+    /// Sandboxes being deleted so, and when each is gone.
+    pub vanishing: BTreeMap<String, std::time::Instant>,
+    /// The next this-many policy reads answer this error, as NVIDIA OpenShell
+    /// answers right after a create (measured on the walk box).
+    pub fail_policy_reads: Option<(usize, tonic::Code)>,
+    /// A policy read of a desk being deleted answers this error.
+    pub policy_error_while_deleting: Option<tonic::Code>,
     /// The last sandbox id number handed out.
     pub next_id: u64,
     /// RPCs whose effect is committed and whose reply is then lost.

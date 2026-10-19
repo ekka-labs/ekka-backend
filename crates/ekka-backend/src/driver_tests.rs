@@ -22,7 +22,10 @@ const IMAGE: &str =
 const ENFORCE: &str = "NETWORK_ENFORCEMENT_MODE_ENFORCE";
 /// `Verified::for_tests`' request id.
 pub(crate) const RID: &str = "00000000-0000-5000-8000-000000000000";
-const FIRST_ID: &str = "00000000-0000-4000-8000-000000000001";
+pub(crate) const FIRST_ID: &str = "00000000-0000-4000-8000-000000000001";
+/// The tests' settle window: the old fixed 5 s, so a test that waits out a
+/// change still waits as long as it always did.
+pub(crate) const SETTLE_FOR: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn uid() -> u32 {
     rustix::process::geteuid().as_raw()
@@ -57,13 +60,13 @@ pub(crate) fn grant() -> Value {
 const GITHUB_CONFIG: &str =
     "sha256:b2a3df945ba9e782b8175bb0f7a140b00db8b957d528200882a66fa2ac054866";
 
-fn admitted() -> Admitted {
+pub(crate) fn admitted() -> Admitted {
     Verified::for_tests(Some(grant())).admit().unwrap()
 }
 
 /// The `n`th operation after the first: its own request id, as every real
 /// operation has (the gateway replays a request id it has seen).
-fn then(n: u64) -> Admitted {
+pub(crate) fn then(n: u64) -> Admitted {
     Verified::for_tests_as(Some(grant()), &format!("00000000-0000-5000-8000-{n:012}"))
         .admit()
         .unwrap()
@@ -106,11 +109,12 @@ pub(crate) async fn world() -> World {
         claims: Claims::beside(&dir.path().join("backend.sock"), uid()),
         // No record: a driver test concludes with nothing to write first.
         records: super::Records::Unrecorded,
+        settle_for: SETTLE_FOR,
     };
     World { b, gw, enc, dir }
 }
 
-fn methods(w: &World) -> Vec<String> {
+pub(crate) fn methods(w: &World) -> Vec<String> {
     w.enc
         .lock()
         .unwrap()
@@ -129,7 +133,7 @@ fn mutations(w: &World) -> Vec<String> {
         .collect()
 }
 
-fn code(a: &Answer) -> Option<Code> {
+pub(crate) fn code(a: &Answer) -> Option<Code> {
     a.code
 }
 

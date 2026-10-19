@@ -48,11 +48,30 @@ pub const OPERATION_LABEL: &str = "ekka.ai/operation";
 /// The annotation the Enclave's auto-registration reads as the desk's
 /// REQUIRED providers.
 pub const PROVIDERS_ANNOTATION: &str = "ekka.ai/desk-providers";
-/// How many times a change's result is read back while the gateway is still
-/// carrying it out (a delete accepted before the sandbox disappears; a stop
-/// before the sandbox stops), and the wait between reads.
-const SETTLE_READS: usize = 20;
+/// The wait between two reads of a change the gateway is still carrying out
+/// (a create before its policy is loaded, a delete before the sandbox is
+/// gone, a stop before it stops).
 const SETTLE_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+/// What the settle window leaves of the call's deadline, at most: room to
+/// write the record, release the claim and answer before the server's own
+/// deadline answers `running` for it.
+const SETTLE_MARGIN: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Every change is read back for at least this long after its send, even
+/// when the send itself outlasted the call: the server has answered
+/// `running` by then, and these reads are how the change concludes on its own
+/// rather than waiting for recovery.
+const SETTLE_AFTER_SEND: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// HOW LONG A CHANGE IS READ BACK: the call's deadline less a margin, from the
+/// moment it was admitted (and never less than [`SETTLE_AFTER_SEND`] after the
+/// send). A fixed window was shorter than the gateway is
+/// (a delete takes longer than 5 s), so a finished change answered `running`.
+/// The margin is at most half the deadline, so a short deadline still reads.
+#[must_use]
+pub fn settle_window(deadline: std::time::Duration) -> std::time::Duration {
+    deadline.saturating_sub(SETTLE_MARGIN.min(deadline / 2))
+}
 
 /// The backend the driver reaches.
 pub struct Backend {
@@ -62,6 +81,9 @@ pub struct Backend {
     /// The operation records: a change's answer is written here BEFORE its
     /// claim is released ([`Backend::conclude`]).
     pub records: Records,
+    /// How long after its admission a change is read back:
+    /// [`settle_window`] of the configured deadline.
+    pub settle_for: std::time::Duration,
 }
 
 /// Where the driver writes a change's answer before it releases the claim.
@@ -164,13 +186,31 @@ impl Backend {
         let Some(sb) = self.gateway.sandbox(bearer, name).await? else {
             return Ok(None);
         };
-        let status = self.gateway.policy_status(bearer, name).await?;
-        let rev = status.revision.unwrap_or_default();
-        // The wall the desk enforces is the LOADED revision; while a newer one
-        // is not loaded, its digest is not reported, as the Enclave reports it.
-        let policy_digest = (rev.version == status.active_version)
-            .then(|| rev.policy.as_ref().and_then(|p| message_digest(POLICY, p)))
-            .flatten();
+        let (sb, policy_digest) = match self.gateway.policy_status(bearer, name).await {
+            Ok(status) => {
+                let rev = status.revision.unwrap_or_default();
+                // The wall the desk enforces is the LOADED revision; while a
+                // newer one is not loaded, its digest is not reported, as the
+                // Enclave reports it.
+                let digest = (rev.version == status.active_version)
+                    .then(|| rev.policy.as_ref().and_then(|p| message_digest(POLICY, p)))
+                    .flatten();
+                (sb, digest)
+            }
+            // Found a moment ago, its policy now NOT_FOUND. GetSandbox is
+            // asked again, and only its NOT_FOUND makes the desk gone (a
+            // delete landing between the two reads); never assumed, or a
+            // delete would be released as done while the desk is there.
+            // Still there: the desk has NO POLICY REPORTED YET, measured on
+            // NVIDIA OpenShell right after a create (its supervisor reports
+            // the policy a moment later). No digest, so nothing that needs
+            // one is done yet.
+            Err(GatewayError::NotFound) => match self.gateway.sandbox(bearer, name).await? {
+                None => return Ok(None),
+                Some(now) => (now, None),
+            },
+            Err(e) => return Err(e),
+        };
         let meta = sb.metadata.clone().unwrap_or_default();
         let facts = DeskFacts {
             backend_id: is_uuid(&meta.id).then(|| meta.id.clone()),
@@ -472,10 +512,25 @@ impl Backend {
         self.refuse_claimed(a, desk, code).await
     }
 
-    /// Read the desk back until `done` says the change shows, within a bound.
+    /// Read the desk back until `done` says the change shows, until the
+    /// settle window ends: [`settle_window`] from this call's admission, and
+    /// at least [`SETTLE_AFTER_SEND`] from now. A read-back or a recovery
+    /// runs inside another call (often a read): [`SETTLE_AFTER_SEND`] only.
+    /// A READ ERROR IS "NOT SHOWN YET": read again until the window ends.
+    /// Measured on NVIDIA OpenShell: right after a create, and while a desk is
+    /// being removed, a read answers an error, not the change. Only a read
+    /// that shows the change (`done`) is ever `ready`. A refused token or
+    /// client (UNAUTHENTICATED, PERMISSION_DENIED) will not pass by waiting:
+    /// it ends the settle at once. A window that ends on an error returns it,
+    /// so the change stays `running` with its desk held (never released as
+    /// `unknown` on a read that failed). The first error's code is logged,
+    /// once per change.
     /// `None` when it never showed: the change is still being carried out.
+    /// EVERY READ ENDS WITH THE WINDOW: a read still waiting on the gateway
+    /// then (a call may wait 30 s) has shown nothing, so it is never `ready`.
     async fn settle<F>(
         &self,
+        a: &Admitted,
         bearer: &str,
         name: &str,
         done: F,
@@ -483,16 +538,34 @@ impl Backend {
     where
         F: Fn(Option<&(Sandbox, DeskFacts)>) -> bool,
     {
-        for i in 0..SETTLE_READS {
-            if i > 0 {
-                tokio::time::sleep(SETTLE_WAIT).await;
+        let now = tokio::time::Instant::now();
+        let until = a
+            .admitted_at()
+            .map_or(now, |at| at + self.settle_for)
+            .max(now + SETTLE_AFTER_SEND);
+        let mut failed: Option<GatewayError> = None;
+        loop {
+            let Ok(read) = tokio::time::timeout_at(until, self.facts(bearer, name)).await else {
+                return failed.map_or(Ok(None), Err);
+            };
+            match read {
+                Ok(now) if done(now.as_ref()) => return Ok(Some(now)),
+                Ok(_) => failed = None,
+                Err(e @ (GatewayError::Unauthenticated | GatewayError::PermissionDenied)) => {
+                    return Err(e)
+                }
+                Err(e) => {
+                    if failed.is_none() {
+                        tracing::info!(desk = %name, error = %e, "settleReadNotYet");
+                    }
+                    failed = Some(e);
+                }
             }
-            let now = self.facts(bearer, name).await?;
-            if done(now.as_ref()) {
-                return Ok(Some(now));
+            if tokio::time::Instant::now() + SETTLE_WAIT >= until {
+                return failed.map_or(Ok(None), Err);
             }
+            tokio::time::sleep(SETTLE_WAIT).await;
         }
-        Ok(None)
     }
 
     /// Answer a change the gateway accepted, from its read-back: `ready` and
@@ -663,7 +736,15 @@ impl Backend {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
-        let read = self.settle(bearer, name, |d| d.is_some()).await;
+        // DONE IS LOADED: the sandbox exists AND its policy is loaded. It
+        // exists before its policy loads, and a read-back then has no policy
+        // digest to report, so stopping at "exists" answered `running` for
+        // every create, though the desk was ready a second later.
+        let read = self
+            .settle(a, bearer, name, |d| {
+                d.is_some_and(|(_, f)| f.policy_digest.is_some())
+            })
+            .await;
         // WHAT WAS APPROVED, not only what was asked for. The policy the
         // desk LOADED must be the approved one (the grant pinned this digest
         // at admission); not loaded yet is still running. And each
@@ -811,7 +892,7 @@ impl Backend {
                 return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
-        match self.settle(bearer, name, |d| d.is_none()).await {
+        match self.settle(a, bearer, name, |d| d.is_none()).await {
             Ok(Some(None)) => {
                 let rb = ReadBack::Deleted { sandbox_id: id };
                 self.conclude(
@@ -882,7 +963,7 @@ impl Backend {
             SandboxPhase::Stopped
         };
         let read = self
-            .settle(bearer, name, |d| {
+            .settle(a, bearer, name, |d| {
                 d.is_some_and(|(sb, _)| phase_is(sb, want))
             })
             .await;
@@ -972,7 +1053,7 @@ impl Backend {
             }
         }
         let read = self
-            .settle(bearer, name, |d| {
+            .settle(a, bearer, name, |d| {
                 d.is_some_and(|(_, f)| f.policy_digest.is_some() && f.policy_digest == want)
             })
             .await;
@@ -1052,7 +1133,7 @@ impl Backend {
                 .is_some_and(|p| !p.iter().any(|x| x == provider))
         };
         let read = self
-            .settle(bearer, name, |d| d.is_some_and(|(_, f)| gone(f)))
+            .settle(a, bearer, name, |d| d.is_some_and(|(_, f)| gone(f)))
             .await;
         self.finish(a, name, read, |_, f| gone(f), true, bearer, send.is_none())
             .await
@@ -1209,3 +1290,9 @@ fn is_uuid(s: &str) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[path = "driver_tests.rs"]
 pub(crate) mod tests;
+
+/// How long a change is read back, against a gateway that takes its time.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[path = "driver_settle_tests.rs"]
+mod settle_tests;
