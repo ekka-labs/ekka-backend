@@ -38,6 +38,7 @@ use crate::gateway::{Gateway, GatewayError};
 use crate::normalize::{message, message_digest, message_json, POLICY};
 use crate::providers;
 use crate::signin::{SignInError, Tokens};
+use crate::store::PendingRelease;
 use crate::token::Admitted;
 
 /// The label that marks a sandbox as an EKKA desk, and the one naming the
@@ -74,6 +75,15 @@ pub enum Records {
     Unrecorded,
 }
 
+/// What became of a release.
+enum Release {
+    Done,
+    /// Still owed, as it was.
+    Owed,
+    /// Still owed, now as this outcome.
+    OwedAs(Outcome),
+}
+
 /// A refusal before any change, by its code.
 fn refused(code: Code) -> Answer {
     Answer::refused(code)
@@ -90,11 +100,24 @@ pub trait Notes: Send + Sync {
     /// check passed, right before the gateway call. A record with no send
     /// noted was never sent, so recovery never re-issues it.
     fn sending(&self) -> bool;
+    /// That the gateway call `sending` preceded has RETURNED, whatever it
+    /// answered: the send's end, noted right after it. A start with no end
+    /// is in flight, and no settle marker counts for it.
+    fn sent(&self) {}
+    /// Whether this send RE-ISSUES a change sent before. OpenShell checks who
+    /// asks and finds the target BEFORE it looks up the original
+    /// (`mutation_replay.rs` at e1f3c82, lines 150-170), so a refusal of a
+    /// re-issue says nothing about the original.
+    fn reissue(&self) -> bool {
+        false
+    }
 }
 
-/// For a re-issue or a read-back: recovery noted the send itself.
+/// In tests: a FIRST send whose every note succeeds.
+#[cfg(test)]
 pub struct Noted;
 
+#[cfg(test)]
 impl Notes for Noted {
     fn backend_id(&self, _: &str) -> bool {
         true
@@ -246,29 +269,137 @@ impl Backend {
             #[cfg(test)]
             Records::Unrecorded => None,
         };
-        if let Some(records) = records {
-            let written = records.settle(rid, &answer).or_else(|e| {
-                tracing::warn!(request_id = %rid, error = ?e, "operationSettleRetried");
-                records.settle(rid, &answer)
-            });
-            if let Err(e) = written {
-                tracing::error!(request_id = %rid, desk, error = ?e, "operationNotSettledDeskKept");
-                return Answer::running(rid);
-            }
+        let Some(records) = records else {
+            self.try_release(desk, rid, outcome, rb).await;
+            return answer;
+        };
+        // The release is OWED from the moment the answer is written, in the
+        // same write: a failed release, or a crash before it, is retried at
+        // the next call and at startup (`release_pending`), never by sending
+        // the change again.
+        let owed = PendingRelease {
+            outcome: outcome.name().to_string(),
+            read_back: rb.map(ReadBack::wire),
+        };
+        let written = records.settle_releasing(rid, &answer, &owed).or_else(|e| {
+            tracing::warn!(request_id = %rid, error = ?e, "operationSettleRetried");
+            records.settle_releasing(rid, &answer, &owed)
+        });
+        if let Err(e) = written {
+            tracing::error!(request_id = %rid, desk, error = ?e, "operationNotSettledDeskKept");
+            return Answer::running(rid);
         }
-        self.release(a, desk, outcome, rb).await;
+        self.release_owed(records, desk, rid, outcome, rb).await;
         answer
     }
 
-    /// Release the claim; a release the Enclave refuses or cannot take leaves
-    /// the desk held, which is the safe side, and the answer stands.
-    async fn release(&self, a: &Admitted, desk: &str, outcome: Outcome, rb: Option<&ReadBack>) {
-        if let Err(e) = self
-            .claims
-            .release(desk, &a.verified().request_id, outcome, rb)
-            .await
-        {
-            tracing::warn!(desk, request_id = %a.verified().request_id, error = ?e, "deskReleaseFailed");
+    /// Send the release `request_id` owes and record what became of it.
+    async fn release_owed(
+        &self,
+        records: &crate::store::Store,
+        desk: &str,
+        request_id: &str,
+        outcome: Outcome,
+        rb: Option<&ReadBack>,
+    ) {
+        let noted = match self.try_release(desk, request_id, outcome, rb).await {
+            Release::Done => records.released(request_id),
+            Release::Owed => return,
+            Release::OwedAs(o) => records.note_release(
+                request_id,
+                &PendingRelease {
+                    outcome: o.name().to_string(),
+                    read_back: None,
+                },
+            ),
+        };
+        if let Err(e) = noted {
+            tracing::warn!(request_id, desk, error = ?e, "releaseNotNoted");
+        }
+    }
+
+    /// One release, read the way a retry must read it.
+    ///
+    /// - Done: the Enclave released it, or answers that this change no longer
+    ///   holds the desk (`DESK_NOT_HELD`, `DESK_HELD_BY_ANOTHER`: an earlier
+    ///   release went through and its answer was lost).
+    /// - A refusal that a retry would only repeat (`READ_BACK_MISMATCH`,
+    ///   `READ_BACK_REQUIRED`) is released `unknown` instead: the desk stays
+    ///   held, marked for a person, and is never retried forever.
+    /// - Anything else stays owed: the desk stays held, the safe side.
+    async fn try_release(
+        &self,
+        desk: &str,
+        request_id: &str,
+        outcome: Outcome,
+        rb: Option<&ReadBack>,
+    ) -> Release {
+        match self.claims.release(desk, request_id, outcome, rb).await {
+            Ok(_) => Release::Done,
+            Err(ClaimError::Refused(code))
+                if code == "DESK_NOT_HELD" || code == "DESK_HELD_BY_ANOTHER" =>
+            {
+                tracing::info!(desk, request_id, code, "deskAlreadyReleased");
+                Release::Done
+            }
+            Err(ClaimError::Refused(code))
+                if (code == "READ_BACK_MISMATCH" || code == "READ_BACK_REQUIRED")
+                    && outcome != Outcome::Unknown =>
+            {
+                tracing::warn!(desk, request_id, code, "deskReleasedUnknownForAPerson");
+                match self
+                    .claims
+                    .release(desk, request_id, Outcome::Unknown, None)
+                    .await
+                {
+                    Ok(_) => Release::Done,
+                    Err(e) => {
+                        tracing::warn!(desk, request_id, error = ?e, "deskReleaseFailed");
+                        Release::OwedAs(Outcome::Unknown)
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(desk, request_id, error = ?e, "deskReleaseFailed");
+                Release::Owed
+            }
+        }
+    }
+
+    /// Retry every release a settled change still owes: before every call,
+    /// and at startup. Idempotent: a release that went through answers that
+    /// the change no longer holds the desk.
+    pub async fn release_pending(&self) {
+        let records = match &self.records {
+            Records::Store(store) => Some(store),
+            #[cfg(test)]
+            Records::Unrecorded => None,
+        };
+        let Some(records) = records else {
+            return;
+        };
+        let owed = match records.releasing() {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!(error = ?e, "releasingUnreadable");
+                return;
+            }
+        };
+        for rec in owed {
+            let Some(p) = rec.release_pending.as_ref() else {
+                continue;
+            };
+            let Some(outcome) = Outcome::from_name(&p.outcome) else {
+                tracing::error!(request_id = %rec.request_id, "releaseOutcomeUnreadable");
+                continue;
+            };
+            let rb = p.read_back.as_ref().and_then(ReadBack::from_wire);
+            if p.read_back.is_some() && rb.is_none() {
+                tracing::error!(request_id = %rec.request_id, "releaseReadBackUnreadable");
+                continue;
+            }
+            self.release_owed(records, &rec.desk, &rec.request_id, outcome, rb.as_ref())
+                .await;
         }
     }
 
@@ -278,10 +409,39 @@ impl Backend {
             .await
     }
 
+    /// A send that could not be noted is not sent. A first send is refused,
+    /// its claim freed; a RE-ISSUE stays running, its desk held (the
+    /// original may have run).
+    async fn not_noted(&self, a: &Admitted, desk: &str, notes: &dyn Notes) -> Answer {
+        if notes.reissue() {
+            return Answer::running(&a.verified().request_id);
+        }
+        self.refuse_claimed(a, desk, Code::BackendUnavailable).await
+    }
+
     /// What a gateway refusal of a CHANGE answers. A change that may still
     /// finish answers `running` and keeps its claim; one the gateway decided
     /// against releases it `refused`.
-    async fn change_failed(&self, a: &Admitted, desk: &str, e: GatewayError) -> Answer {
+    ///
+    /// A RE-ISSUE is never refused: whatever the gateway answers, NotFound
+    /// included (the original delete may have succeeded), it was decided
+    /// before the original was looked up. Only a success the read-back
+    /// confirms settles a re-issue; until then the change stays running and
+    /// its desk held.
+    async fn change_failed(
+        &self,
+        a: &Admitted,
+        desk: &str,
+        e: GatewayError,
+        reissue: bool,
+    ) -> Answer {
+        if reissue {
+            if matches!(e, GatewayError::Unauthenticated) {
+                self.tokens.rejected();
+            }
+            tracing::warn!(request_id = %a.verified().request_id, desk, error = ?e, "reissueRefusedDeskKept");
+            return Answer::running(&a.verified().request_id);
+        }
         let code = match e {
             GatewayError::Unavailable
             | GatewayError::Uncertain
@@ -489,19 +649,43 @@ impl Backend {
         // `None`: a read-back only (a settle marker said the change stopped),
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
-            if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
-            }
             // A re-issue whose policy cannot be rebuilt is not sent.
             let Some(policy) = policy else {
                 return Answer::running(&a.verified().request_id);
             };
             let msg = Self::create_request(body, policy, &a.verified().request_id);
-            if let Err(e) = self.gateway.create(bearer, msg).await {
-                return self.change_failed(a, name, e).await;
+            if !notes.sending() {
+                return self.not_noted(a, name, notes).await;
+            }
+            let sent = self.gateway.create(bearer, msg).await;
+            notes.sent();
+            if let Err(e) = sent {
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let read = self.settle(bearer, name, |d| d.is_some()).await;
+        // WHAT WAS APPROVED, not only what was asked for. The policy the
+        // desk LOADED must be the approved one (the grant pinned this digest
+        // at admission); not loaded yet is still running. And each
+        // provider's configuration, read again now the desk exists, must be
+        // the one the grant pins: one changed while the desk was made never
+        // finishes as approved. A read-back with no grant (a settle marker)
+        // cannot confirm the providers: `unknown`, the desk held.
+        let approved = self.approved(a, body);
+        let approved_policy = approved.as_ref().map(|p| p.policy_digest.clone());
+        let providers_ok = match &read {
+            Ok(Some(Some(_))) => {
+                let pins = approved.as_ref().map(|p| &p.provider_config_digests);
+                self.providers_still_approved(bearer, &body.providers, pins)
+                    .await
+            }
+            _ => Ok(false),
+        };
+        let (read, providers_ok) = match providers_ok {
+            Ok(ok) => (read, ok),
+            // The providers could not be read: still running, claim kept.
+            Err(e) => (Err(e), false),
+        };
         let expected = enforce::Expected {
             image: &body.image,
             policy: &body.policy,
@@ -511,18 +695,71 @@ impl Backend {
             a,
             name,
             read,
-            |sb, _| {
+            |sb, facts| {
                 let json = message_json(crate::normalize::SANDBOX, sb).unwrap_or(Value::Null);
                 enforce::result_matches(&expected, &json)
                     && sb.metadata.as_ref().is_some_and(|m| {
                         m.labels.get(OPERATION_LABEL) == Some(&a.verified().request_id)
                     })
+                    && providers_ok
+                    && (facts.policy_digest.is_none() || facts.policy_digest == approved_policy)
             },
             false,
             bearer,
             send.is_none(),
         )
         .await
+    }
+
+    /// What the grant approved for this create: from the grant when this
+    /// call holds one, else from the operation's record, where admission
+    /// wrote it while the token was verified (a settle marker's read-back
+    /// carries no grant, and a Govern key rotated since must not strand the
+    /// desk). Neither: `None`, and the create cannot finish as approved.
+    fn approved(&self, a: &Admitted, body: &enforce::CreateBody) -> Option<crate::store::Approved> {
+        if let Ok(g) = enforce::grant(a.verified().grant.as_ref()) {
+            return Some(crate::store::Approved {
+                policy_digest: crate::digest_cmd::policy_digest(&body.policy)?,
+                provider_config_digests: g.provider_config_digests,
+            });
+        }
+        let records = match &self.records {
+            Records::Store(store) => Some(store),
+            #[cfg(test)]
+            Records::Unrecorded => None,
+        }?;
+        records
+            .get(&a.verified().request_id)
+            .ok()
+            .flatten()
+            .and_then(|r| r.approved)
+    }
+
+    /// Whether each of `names` holds, at the gateway now, the configuration
+    /// `pins` approves. No pins (a read-back with no grant), a provider
+    /// gone, or one changed: `false`. A read that fails: the error, so the
+    /// change stays running.
+    async fn providers_still_approved(
+        &self,
+        bearer: &str,
+        names: &[String],
+        pins: Option<&std::collections::BTreeMap<String, String>>,
+    ) -> Result<bool, GatewayError> {
+        let Some(pins) = pins else {
+            return Ok(false);
+        };
+        for p in names {
+            let now = match providers::read(&self.gateway, bearer, p).await {
+                Ok((rec, prof)) => providers::config_digest(p, &rec, &prof).ok(),
+                Err((GatewayError::NotFound, _)) => None,
+                Err((e, _)) => return Err(e),
+            };
+            if now.is_none() || now.as_ref() != pins.get(p) {
+                tracing::warn!(provider = %p, "providerChangedDuringCreate");
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// `delete`. The desk's id is read first and handed to `note` (the
@@ -563,14 +800,15 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .delete(bearer, name, &a.verified().request_id)
-                .await
-            {
-                return self.change_failed(a, name, e).await;
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         match self.settle(bearer, name, |d| d.is_none()).await {
@@ -627,14 +865,15 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .stop_or_start(bearer, name, &a.verified().request_id, start)
-                .await
-            {
-                return self.change_failed(a, name, e).await;
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let want = if start {
@@ -721,14 +960,15 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .set_policy(bearer, name, policy, expected, &a.verified().request_id)
-                .await
-            {
-                return self.change_failed(a, name, e).await;
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let read = self
@@ -795,14 +1035,15 @@ impl Backend {
         // nothing is sent. Otherwise noted durably first: not noted, not sent.
         if let Some(notes) = send {
             if !notes.sending() {
-                return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+                return self.not_noted(a, name, notes).await;
             }
-            if let Err(e) = self
+            let sent = self
                 .gateway
                 .detach(bearer, name, provider, expected, &a.verified().request_id)
-                .await
-            {
-                return self.change_failed(a, name, e).await;
+                .await;
+            notes.sent();
+            if let Err(e) = sent {
+                return self.change_failed(a, name, e, notes.reissue()).await;
             }
         }
         let gone = |f: &DeskFacts| {
@@ -846,16 +1087,18 @@ impl Backend {
     /// own request id, so the gateway replays its recorded success (or
     /// answers UNCERTAIN) and never applies it twice. `a` comes from the
     /// stored token, re-checked (`Admitted::for_recovery`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn reissue(
         &self,
         a: &Admitted,
+        notes: &dyn Notes,
         operation: crate::routes::Operation,
         desk: &str,
         provider: Option<&str>,
         body: &[u8],
         backend_id: Option<&str>,
     ) -> Answer {
-        self.recover(a, operation, desk, provider, body, backend_id, true)
+        self.recover(a, operation, desk, provider, body, backend_id, Some(notes))
             .await
     }
 
@@ -871,7 +1114,7 @@ impl Backend {
         body: &[u8],
         backend_id: Option<&str>,
     ) -> Answer {
-        self.recover(a, operation, desk, provider, body, backend_id, false)
+        self.recover(a, operation, desk, provider, body, backend_id, None)
             .await
     }
 
@@ -888,9 +1131,8 @@ impl Backend {
         provider: Option<&str>,
         body: &[u8],
         backend_id: Option<&str>,
-        resend: bool,
+        send: Option<&dyn Notes>,
     ) -> Answer {
-        let send: Option<&dyn Notes> = resend.then_some(&Noted);
         use crate::routes::Operation;
         let bearer = match self.bearer(a).await {
             Ok(b) => b,

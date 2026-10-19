@@ -182,11 +182,13 @@ Every change follows the same order:
 5. Write the answer to the operation's record.
 6. Only then, release the claim with the outcome and the read-back.
 
-If the record cannot be written (tried twice), the claim is NOT released. The desk stays held, the change answers `running` as its record says, and recovery settles it later. A crash between the record and the release leaves a settled record and a held desk; the operator release (`ekka desk release --operation`) is for exactly that. A read takes no claim.
+If the record cannot be written (tried twice), the claim is NOT released. The desk stays held, the change answers `running` as its record says, and recovery settles it later. A read takes no claim.
+
+The release is OWED from the moment the answer is written: the record names it in the same write. A release that fails, or a crash before it, is retried before every call and at startup, and the change is never sent again. A release the Enclave already took answers that the change no longer holds the desk (`DESK_NOT_HELD`, or `DESK_HELD_BY_ANOTHER` once a job took it), which counts as released. A refusal a retry would only repeat (`READ_BACK_MISMATCH`, `READ_BACK_REQUIRED`) is released `unknown` instead: the desk stays held for a person, who releases it with `ekka desk release --operation` after reading the desk.
 
 | Operation | NVIDIA OpenShell calls | Answer |
 |---|---|---|
-| `create` | CreateSandbox, then GetSandbox and GetSandboxPolicyStatus | `backend_id`, `resource_version`, `policy_digest`, `providers` |
+| `create` | CreateSandbox, then GetSandbox, GetSandboxPolicyStatus and each provider again | `backend_id`, `resource_version`, `policy_digest`, `providers`; `ready` only when the LOADED policy is the approved one and each provider's configuration is still the one the grant pins, else `unknown` |
 | `delete` | GetSandbox, DeleteSandbox, then GetSandbox until NOT_FOUND | released with `{deleted: true, sandbox_id}` |
 | `stop`, `start` | StopSandbox or StartSandbox, then reads until the phase shows | the desk's facts |
 | `policy_set` | GetSandbox (the creation policy), UpdateConfig at `expected_resource_version`, then reads until the new revision is loaded | the new `policy_digest` and `resource_version` |
@@ -213,9 +215,9 @@ The adapter takes each running change through these rules, in order:
 
 1. **A change never sent.** Its record names no send: the adapter stopped before the change passed its claim and every check, or the change was refused before sending. It is never re-issued. Nothing reached the desk, so it settles `refused` `NOT_APPLIED`, and its claim, if it holds one, is released. The driver notes each change's first send in its record, durably, after its claim and every check and right before the desk backend call. Not noted means not sent.
 
-2. **A settle marker for it** means the change has stopped. Nothing is sent: the read-back alone decides, `ready` or `unknown`, and the claim is released. The adapter refuses a marker when:
+2. **A settle marker for it** means the change has stopped. Nothing is sent: the read-back alone decides, `ready` or `unknown`, and the claim is released. A create's read-back checks the desk against what its grant approved: the policy digest and each provider's configuration digest, written to the operation's record at admission while its token was verified. Nothing re-verifies the token, so a Govern key rotated since never strands the desk. The adapter refuses a marker when:
    - it names another operation, desk, backend id or desk backend (`<url>#<workspace>` from the adapter's config, byte for byte);
-   - its desk backend restart is not after the change was LAST SENT (its admission, or its latest re-issue). The record notes each send before it goes, so no send can still be inside the desk backend when a marker releases the desk;
+   - its desk backend restart is not after the change's last send ENDED. The record notes each send's start right before it goes and its end right after it returns, with the adapter process that sent it. A send with no end is still in flight: no marker counts for it while that process runs, and after the adapter restarts, only a desk backend restart after the new adapter started counts. So no send can still be inside the desk backend when a marker releases the desk;
    - its quiet window has not ended, or does not end after the restart;
    - it names a container still `created` (never started), `restarting` or `removing`. A container that stays `created` keeps its change running and its desk held until the container starts or is removed; then the desk is settled again;
    - the file is not the adapter's user's, is not mode 0600, or is a link.

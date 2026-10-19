@@ -550,6 +550,62 @@ async fn a_payload_mismatch_on_reissue_stays_running_and_claimed() {
     assert!(r.held(DESK));
 }
 
+/// A RE-ISSUE that is refused never settles the change. The
+/// original stop lost its reply; its re-issue is refused before OpenShell
+/// looks the original up (who asks, then the target), so the refusal says
+/// nothing about the original. NotFound too: an original delete that ran
+/// would answer it. The change stays running and its desk held until a
+/// success the read-back confirms.
+#[tokio::test]
+async fn a_reissue_refused_before_the_replay_lookup_keeps_the_change_running_and_held() {
+    let r = rig().await;
+    r.w.gw
+        .lock()
+        .unwrap()
+        .lose_reply
+        .insert("StopSandbox".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Running);
+    r.w.gw.lock().unwrap().lose_reply.clear();
+    let refused_sends = || {
+        r.w.gw
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .filter(|c| c.starts_with("StopSandbox (planted"))
+            .count()
+    };
+    for (n, code) in [
+        (2, tonic::Code::Unauthenticated),
+        (3, tonic::Code::PermissionDenied),
+        (4, tonic::Code::NotFound),
+    ] {
+        r.w.gw.lock().unwrap().faults.answer.insert(
+            "StopSandbox".into(),
+            ekka_backend_fakegw::faults::Planted::Refused { code, reason: None },
+        );
+        let before = refused_sends();
+        let s = r.status(DESK, n).await;
+        assert_eq!(
+            refused_sends(),
+            before + 1,
+            "{code:?}: it was re-issued and refused"
+        );
+        assert_eq!(
+            (s.outcome, s.operation_id.clone()),
+            (Outcome::Running, Some(rid(1))),
+            "{code:?}"
+        );
+        assert_eq!(r.state(&rid(1)), State::Running, "{code:?}: not settled");
+        assert!(r.held(DESK), "{code:?}: the desk stays held");
+    }
+    // The gateway answers again: the replayed success settles it.
+    r.w.gw.lock().unwrap().faults.answer.clear();
+    assert_eq!(r.status(DESK, 5).await.outcome, Outcome::Ready);
+    assert_eq!(r.answer_of(&rid(1)).outcome, Outcome::Ready);
+    assert!(!r.held(DESK), "released with the confirmed outcome");
+}
+
 /// Kill points. BEFORE the call (the gateway never saw it): the re-issue
 /// carries it out. AFTER the write (the reply lost): the re-issue replays.
 /// (The third, during re-pin, is the Enclave's, tested there.)
@@ -832,6 +888,59 @@ async fn a_marker_settles_after_the_govern_key_rotated_and_a_reissue_does_not() 
     assert!(!r.held(DESK));
 }
 
+/// A create settled by its marker after the Govern key rotated still ends
+/// `ready` when the desk matches: its approved pins were written to its
+/// record at admission, while its token was verified, and the read-back
+/// reads them there. Nothing re-verifies the token.
+#[tokio::test]
+async fn a_create_settled_by_its_marker_after_the_key_rotated_reads_its_pins_from_its_record() {
+    let mut r = rig().await;
+    r.w.gw
+        .lock()
+        .unwrap()
+        .lose_finalizer
+        .insert("CreateSandbox".into());
+    let body = serde_json::to_vec(&json!({ "name": "desk-c", "image":
+        "ghcr.io/example/desk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy": crate::driver::tests::policy(), "providers": ["github"] }))
+    .unwrap();
+    let t = signed(1, "write", Some((&body, crate::driver::tests::grant())));
+    assert_eq!(
+        r.call(Operation::Create, "", 1, &body, &t).await.outcome,
+        Outcome::Running
+    );
+    r.w.gw.lock().unwrap().lose_finalizer.clear();
+    let approved = r.r.store().get(&rid(1)).unwrap().unwrap().approved.unwrap();
+    assert_eq!(
+        approved.provider_config_digests.keys().collect::<Vec<_>>(),
+        ["github"],
+        "written at admission"
+    );
+    // The adapter restarts with only a NEW Govern key.
+    let state = r.w.dir.path().join("state");
+    let rotated = ed25519_dalek::SigningKey::from_bytes(&[9; 32]);
+    r.r = Recovery::new(
+        Arc::new(crate::store::Store::open(&state, uid()).unwrap()),
+        Arc::new(crate::testkit::verifier(
+            &[("govern-gate-token-v2", &rotated)],
+            NOW,
+        )),
+        gateway_identity(&config(&[]).backend_gateway),
+        &state,
+        uid(),
+        clock_of(&r.clock),
+    )
+    .unwrap();
+    r.w.b.records = crate::driver::Records::Store(r.r.records());
+    r.advance(Duration::hours(1));
+    assert_eq!(r.status("desk-c", 2).await.outcome, Outcome::Running);
+    r.marker(&rid(1), "desk-c", |_| {});
+    let s = r.status("desk-c", 3).await;
+    assert_eq!(s.outcome, Outcome::Ready, "{s:?}");
+    assert_eq!(r.answer_of(&rid(1)).outcome, Outcome::Ready);
+    assert!(!r.held("desk-c"));
+}
+
 impl Rig {
     /// A settle hold for `rid`, good unless `change` spoils it.
     fn hold(&self, rid: &str, change: impl FnOnce(&mut Value)) -> std::path::PathBuf {
@@ -886,6 +995,233 @@ async fn a_hold_then_a_status_then_a_marker_settles_the_change() {
     assert!(!r.held(DESK));
     assert!(!marker.exists() && marker.with_extension("json.used").exists());
     assert!(!hold.exists() && hold.with_extension("hold.used").exists());
+}
+
+/// NO SEND CROSSES A SETTLE. A re-issue is in flight (its reply held, then
+/// lost) while the kit holds the change, restarts the gateway and writes its
+/// marker. The send ENDED after that restart, so the marker is refused and
+/// the desk stays held; a later restart, after the send ended, settles it.
+#[tokio::test]
+async fn a_reissue_in_flight_across_a_hold_and_a_restart_never_lets_that_marker_count() {
+    let r = rig().await;
+    r.w.gw
+        .lock()
+        .unwrap()
+        .lose_reply
+        .insert("StopSandbox".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Running);
+    {
+        let mut gw = r.w.gw.lock().unwrap();
+        gw.lose_reply.clear();
+        gw.faults
+            .delay
+            .insert("StopSandbox".into(), std::time::Duration::from_millis(400));
+        gw.faults.drop_reply.insert("StopSandbox".into());
+    }
+    let (during, ()) = tokio::join!(r.status(DESK, 2), async {
+        // The re-issue has started; it ends only after all of this.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        r.hold(&rid(1), |_| {});
+        // 01:00:30: the gateway restarted at 01:00, the marker is written.
+        r.advance(Duration::seconds(50 * 60 + 30));
+        r.marker(&rid(1), DESK, |_| {});
+    });
+    assert_eq!(during.outcome, Outcome::Running, "{during:?}");
+    {
+        let mut gw = r.w.gw.lock().unwrap();
+        gw.faults.delay.clear();
+        gw.faults.drop_reply.clear();
+    }
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert!(
+        rec.last_send_ended_at.as_deref() > Some("2026-10-15T01:00:00Z"),
+        "the re-issue ended after the restart: {rec:?}"
+    );
+    // 01:02, the quiet window over: the marker is refused, nothing is sent
+    // while the hold stands, and the desk stays held.
+    r.advance(Duration::seconds(90));
+    let sends = r.sent("StopSandbox").len();
+    assert_eq!(r.status(DESK, 3).await.outcome, Outcome::Running);
+    assert_eq!(r.sent("StopSandbox").len(), sends, "held: not re-issued");
+    assert_eq!(r.state(&rid(1)), State::Running);
+    assert!(r.held(DESK), "the marker did not count");
+    // A restart after the send ended counts.
+    let marker = r.marker(&rid(1), DESK, |m| {
+        m["gateway_restarted_at"] = json!("2026-10-15T01:03:00Z");
+        m["quiet_until"] = json!("2026-10-15T01:04:30Z");
+    });
+    r.advance(Duration::minutes(3));
+    assert_eq!(r.status(DESK, 4).await.outcome, Outcome::Ready);
+    assert!(!r.held(DESK));
+    assert!(marker.with_extension("json.used").exists());
+}
+
+/// A send whose end was never noted (its end note failed, or its process
+/// died during it): while THIS adapter runs it is in flight, and no marker
+/// counts. After the adapter restarts, it counts only for a gateway
+/// restarted after the new adapter started.
+#[tokio::test]
+async fn a_send_with_no_end_holds_every_marker_until_the_adapter_and_then_the_gateway_restart() {
+    let mut r = rig().await;
+    uncertain_stop(&r, DESK, 1).await;
+    // Started in this process, never ended.
+    let started = *r.clock.lock().unwrap();
+    r.r.store().note_sent(&rid(1), started, r.r.boot()).unwrap();
+    r.hold(&rid(1), |_| {});
+    r.marker(&rid(1), DESK, |_| {});
+    r.advance(Duration::minutes(52));
+    assert_eq!(r.status(DESK, 2).await.outcome, Outcome::Running);
+    assert!(r.held(DESK), "in flight in this adapter: refused");
+    // A new adapter at 01:02. The 01:00 restart came before it started, when
+    // the old process may still have been sending: refused.
+    r.restart();
+    assert_eq!(r.status(DESK, 3).await.outcome, Outcome::Running);
+    assert!(
+        r.held(DESK),
+        "the gateway restarted before this adapter started"
+    );
+    // The gateway restarts after the new adapter started: it counts.
+    r.marker(&rid(1), DESK, |m| {
+        m["gateway_restarted_at"] = json!("2026-10-15T01:03:00Z");
+        m["quiet_until"] = json!("2026-10-15T01:04:30Z");
+    });
+    r.advance(Duration::minutes(3));
+    assert_eq!(r.status(DESK, 4).await.outcome, Outcome::Ready);
+    assert!(!r.held(DESK));
+}
+
+/// Every send is bracketed in its record: its start, the process that sent
+/// it, and its end.
+#[tokio::test]
+async fn a_first_send_notes_its_start_its_process_and_its_end() {
+    let r = rig().await;
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert_eq!(rec.last_send_boot.as_deref(), Some(r.r.boot()));
+    assert!(rec.last_sent_at.is_some());
+    assert!(rec.last_send_ended_at >= rec.last_sent_at, "{rec:?}");
+    assert_eq!(r.r.boot().len(), 32);
+    let other = rig().await;
+    assert_ne!(other.r.boot(), r.r.boot(), "a boot id is never reused");
+}
+
+/// A SETTLED CHANGE NEVER LOCKS ITS DESK FOREVER. Its release is owed in
+/// the same write as its answer; one that fails is retried at the next call,
+/// for any desk, and the change is never sent again.
+#[tokio::test]
+async fn a_release_that_fails_is_owed_and_retried_at_the_next_call_never_resent() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(
+        r.stop(DESK, 1).await.outcome,
+        Outcome::Ready,
+        "the answer stands"
+    );
+    assert!(r.held(DESK), "the release failed: still held");
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert_eq!(rec.state, State::Settled);
+    assert_eq!(
+        rec.release_pending.as_ref().map(|p| p.outcome.as_str()),
+        Some("ready")
+    );
+    r.status("desk-elsewhere", 2).await;
+    assert!(!r.held(DESK), "released at the next call");
+    let rec = r.r.store().get(&rid(1)).unwrap().unwrap();
+    assert_eq!(rec.release_pending, None);
+    assert_eq!(r.sent("StopSandbox"), [rid(1)], "never sent again");
+}
+
+/// An adapter that stops between the settle and the release releases at
+/// startup, before any call.
+#[tokio::test]
+async fn a_release_still_owed_at_startup_is_sent_before_any_call() {
+    let mut r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    assert!(r.held(DESK));
+    r.restart();
+    r.w.b.release_pending().await;
+    assert!(!r.held(DESK), "released at startup");
+    assert_eq!(
+        r.r.store().get(&rid(1)).unwrap().unwrap().release_pending,
+        None
+    );
+}
+
+/// A retry after a release that went through (its answer lost): the
+/// Enclave answers DESK_NOT_HELD, which is released, not retried forever.
+#[tokio::test]
+async fn a_retried_release_the_enclave_already_took_counts_as_released() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    // The first release went through after all.
+    r.w.enc.lock().unwrap().held.remove(DESK);
+    r.status(DESK, 2).await;
+    assert_eq!(
+        r.r.store().get(&rid(1)).unwrap().unwrap().release_pending,
+        None
+    );
+    let releases =
+        r.w.enc
+            .lock()
+            .unwrap()
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "runner_desk_release")
+            .count();
+    r.status(DESK, 3).await;
+    let after =
+        r.w.enc
+            .lock()
+            .unwrap()
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "runner_desk_release")
+            .count();
+    assert_eq!(after, releases, "nothing owed: not tried again");
+}
+
+/// A refusal a retry would only repeat (the read-back does not match the
+/// desk's pins) is released UNKNOWN: the desk stays held, for a person.
+#[tokio::test]
+async fn a_release_refused_for_its_read_back_is_released_unknown_for_a_person() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("READ_BACK_MISMATCH: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    let releases: Vec<Value> =
+        r.w.enc
+            .lock()
+            .unwrap()
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "runner_desk_release")
+            .map(|(_, p)| p)
+            .collect();
+    let last = releases.last().unwrap();
+    assert_eq!(last["outcome"], "unknown", "{releases:?}");
+    assert!(last.get("read_back").is_none());
+    assert!(r.held(DESK), "held as unknown, for a person");
+    assert_eq!(
+        r.r.store().get(&rid(1)).unwrap().unwrap().release_pending,
+        None
+    );
 }
 
 /// An unsafe or wrong hold counts as none (logged): the re-issue happens.

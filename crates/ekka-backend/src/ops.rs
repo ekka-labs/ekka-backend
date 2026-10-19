@@ -69,6 +69,9 @@ pub(crate) async fn answer(
     verified: Verified,
     body: &Bytes,
 ) -> Answer {
+    // A settled change's release that did not go through is retried
+    // first, at every call: it never waits on a call for its own desk.
+    b.release_pending().await;
     let store = recovery.store();
     let desk = desk_of(route, body);
     if !route.operation.mutates() {
@@ -107,7 +110,7 @@ pub(crate) async fn answer(
     let Some(_attempt) = recovery.take(&request_id) else {
         return Answer::running(&request_id);
     };
-    let rec = store::running(
+    let mut rec = store::running(
         route,
         desk.as_deref().unwrap_or_default(),
         &request_id,
@@ -116,6 +119,7 @@ pub(crate) async fn answer(
         &gate_token,
         recovery.now(),
     );
+    rec.approved = approved(route, &a, body);
     match store.begin(&rec) {
         Ok(()) => {}
         // Another delivery recorded it first: it is that one's to finish.
@@ -144,6 +148,7 @@ pub(crate) async fn answer(
             let notes = RecordNotes {
                 recovery,
                 request_id: &request_id,
+                reissue: false,
             };
             dispatch(b, &notes, route, &a, body).await
         }
@@ -167,10 +172,35 @@ pub(crate) async fn answer(
     answer
 }
 
-/// A change's notes, written to its record before the driver acts.
-struct RecordNotes<'a> {
-    recovery: &'a Recovery,
-    request_id: &'a str,
+/// A create's approved pins, from the grant verified at admission: the
+/// policy's digest and each of its providers' configuration digests. `None`
+/// for any other operation, or a body or grant that does not read (the
+/// driver then refuses it before anything is sent).
+fn approved(route: &Route, a: &crate::token::Admitted, body: &[u8]) -> Option<store::Approved> {
+    if route.operation != crate::routes::Operation::Create {
+        return None;
+    }
+    let b = crate::enforce::body::<crate::enforce::CreateBody>(body).ok()?;
+    let g = crate::enforce::grant(a.verified().grant.as_ref()).ok()?;
+    Some(store::Approved {
+        policy_digest: crate::digest_cmd::policy_digest(&b.policy)?,
+        provider_config_digests: b
+            .providers
+            .iter()
+            .filter_map(|p| Some((p.clone(), g.provider_config_digests.get(p)?.clone())))
+            .collect(),
+    })
+}
+
+/// A change's notes, written to its record before the driver acts. A send
+/// is BRACKETED: its start right before the gateway call, its end right
+/// after, both durable, with this process's boot id.
+pub(crate) struct RecordNotes<'a> {
+    pub(crate) recovery: &'a Recovery,
+    pub(crate) request_id: &'a str,
+    /// A re-issue: a refusal, or a send that cannot be noted, keeps the
+    /// change running (`Notes::reissue`).
+    pub(crate) reissue: bool,
 }
 
 impl Notes for RecordNotes<'_> {
@@ -184,8 +214,23 @@ impl Notes for RecordNotes<'_> {
     fn sending(&self) -> bool {
         self.recovery
             .store()
-            .note_sent(self.request_id, self.recovery.now())
+            .note_sent(self.request_id, self.recovery.now(), self.recovery.boot())
             .is_ok()
+    }
+
+    fn sent(&self) {
+        if let Err(e) = self
+            .recovery
+            .store()
+            .note_send_ended(self.request_id, self.recovery.now())
+        {
+            // Left in flight: no marker counts for it while this process runs.
+            tracing::error!(request_id = self.request_id, error = ?e, "sendEndNotNoted");
+        }
+    }
+
+    fn reissue(&self) -> bool {
+        self.reissue
     }
 }
 

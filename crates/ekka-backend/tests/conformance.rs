@@ -1696,6 +1696,49 @@ async fn an_uncertain_change_is_settled_only_by_its_own_marker() {
     h.assert_no_secret_shown();
 }
 
+/// ONE ADAPTER PER STATE FOLDER, through the real binary: a second adapter
+/// started on the same config refuses to start (STATE_IN_USE), and the first
+/// still answers. Recovery's rule for a send from an earlier process relies
+/// on it.
+#[tokio::test]
+async fn a_second_adapter_on_the_same_state_folder_refuses_to_start() {
+    let mut h = Harness::start().await;
+    let mut second = Command::new(env!("CARGO_BIN_EXE_ekka-backend"))
+        .arg("serve")
+        .arg("--config")
+        .arg(&h.config)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    let status = loop {
+        if let Some(s) = second.try_wait().unwrap() {
+            break s;
+        }
+        if started.elapsed() > Duration::from_secs(20) {
+            let _ = second.kill();
+            let _ = second.wait();
+            panic!("a second adapter on the same state folder kept running");
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let mut err = String::new();
+    second
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut err)
+        .unwrap();
+    assert!(!status.success(), "{err}");
+    assert!(err.contains("STATE_IN_USE"), "{err}");
+    h.status().await;
+    assert!(
+        h.child.as_mut().unwrap().try_wait().unwrap().is_none(),
+        "the first still runs"
+    );
+}
+
 /// The search itself finds a planted secret, in a file and in a response:
 /// a clean result above means something.
 #[tokio::test(flavor = "multi_thread")]

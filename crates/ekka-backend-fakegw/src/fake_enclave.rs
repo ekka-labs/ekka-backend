@@ -33,6 +33,9 @@ pub struct Enclave {
     pub watch: Option<std::path::PathBuf>,
     /// `(method, the watched file's text then)`, one per request.
     pub watched: Vec<(String, Option<String>)>,
+    /// Each release takes the first of these, if any, and is refused with it
+    /// (`CODE: why`), changing nothing.
+    pub release_refusals: Vec<String>,
 }
 
 impl Enclave {
@@ -77,6 +80,11 @@ fn answer(st: &Shared, req: &Value) -> Value {
             r
         }
         Some("runner_desk_release") => {
+            if !s.release_refusals.is_empty() {
+                let message = s.release_refusals.remove(0);
+                return json!({ "jsonrpc": "2.0", "id": req["id"], "error": { "code": -32000,
+                    "message": message } });
+            }
             if s.held.get(&desk) != Some(&op) {
                 return json!({ "jsonrpc": "2.0", "id": req["id"], "error": { "code": -32000,
                     "message": format!("DESK_NOT_HELD: no change holds desk '{desk}'") } });

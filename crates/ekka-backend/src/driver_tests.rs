@@ -237,6 +237,68 @@ async fn a_provider_whose_configuration_is_not_the_pinned_one_is_refused() {
     assert_eq!(code(&a), Some(Code::ConstraintProviderConfigDigests));
 }
 
+/// WHAT WAS APPROVED, after the create too: a provider whose configuration
+/// changes while the desk is being made (here, while the create's reply is
+/// held) never finishes as approved. It ends `unknown`, released so: the
+/// desk stays held for a person.
+#[tokio::test]
+async fn a_provider_changed_during_create_cannot_finish_as_approved() {
+    let w = world().await;
+    w.gw.lock().unwrap().faults.delay.insert(
+        "CreateSandbox".into(),
+        std::time::Duration::from_millis(300),
+    );
+    let body = create_body(json!({}));
+    let admitted = admitted();
+    let (a, ()) = tokio::join!(w.b.create(&admitted, &body, &crate::driver::Noted), async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        w.gw.lock()
+            .unwrap()
+            .providers
+            .get_mut("github")
+            .unwrap()
+            .config
+            .insert("org".into(), "someone-else".into());
+    });
+    assert_eq!(a.outcome, AnswerOutcome::Unknown, "{a:?}");
+    let releases: Vec<Value> = methods_params(&w, "runner_desk_release");
+    assert_eq!(
+        releases.last().unwrap()["outcome"],
+        "unknown",
+        "{releases:?}"
+    );
+    assert!(
+        w.enc.lock().unwrap().held.contains_key("code-desk"),
+        "held for a person"
+    );
+}
+
+/// The policy the desk LOADED must be the approved one, not only some policy:
+/// a desk whose loaded revision is another policy than the grant approved
+/// ends `unknown`, never `ready`.
+#[tokio::test]
+async fn a_desk_that_loaded_another_policy_than_the_approved_one_is_unknown() {
+    let w = world().await;
+    w.gw.lock().unwrap().faults.delay.insert(
+        "CreateSandbox".into(),
+        std::time::Duration::from_millis(300),
+    );
+    let body = create_body(json!({}));
+    let admitted = admitted();
+    let (a, ()) = tokio::join!(w.b.create(&admitted, &body, &crate::driver::Noted), async {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let mut g = w.gw.lock().unwrap();
+        let revs = g
+            .revisions
+            .get_mut("code-desk")
+            .expect("the create took effect");
+        let mut other = revs[0].clone();
+        other.network_policies.clear();
+        revs.push(other);
+    });
+    assert_eq!(a.outcome, AnswerOutcome::Unknown, "{a:?}");
+}
+
 #[tokio::test]
 async fn a_busy_desk_is_refused_desk_busy_before_any_change() {
     let w = world().await;
@@ -519,4 +581,16 @@ async fn status_reports_the_desk_and_its_providers_digest_and_takes_no_claim() {
         code(&w2.b.status(&admitted(), "nope").await),
         Some(Code::DeskNotFound)
     );
+}
+
+/// The params of every Enclave call to `method`, in order.
+fn methods_params(w: &World, method: &str) -> Vec<Value> {
+    w.enc
+        .lock()
+        .unwrap()
+        .calls()
+        .into_iter()
+        .filter(|(m, _)| m == method)
+        .map(|(_, p)| p)
+        .collect()
 }

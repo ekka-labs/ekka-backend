@@ -366,3 +366,57 @@ mod lookup_first {
         assert_eq!(stops, 1, "nothing sent again");
     }
 }
+
+/// One adapter per state folder: a second lock on the same folder refuses,
+/// naming it, and the folder can be locked again once the first is gone.
+#[test]
+fn a_second_adapter_on_the_same_state_folder_refuses_to_start() {
+    let d = tempfile::tempdir().unwrap();
+    let first = super::lock_state_dir(d.path()).unwrap();
+    let second = super::lock_state_dir(d.path()).unwrap_err();
+    assert!(second.starts_with("STATE_IN_USE: "), "{second}");
+    drop(first);
+    assert!(
+        super::lock_state_dir(d.path()).is_ok(),
+        "free once the first ended"
+    );
+}
+
+/// A release's index entry is written before its record settles. A parallel
+/// pass that meets the entry while the record is still running keeps it, so
+/// the release the record then owes is always indexed and retried.
+#[test]
+fn a_releasing_entry_for_a_record_still_running_is_kept_until_it_settles() {
+    let d = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let st = Store::open(d.path(), uid()).unwrap();
+    let rid = "00000000-0000-5000-8000-0000000000aa";
+    let body = create("code-desk");
+    let rec = super::running(
+        &route(Operation::Create, None),
+        "code-desk",
+        rid,
+        "op",
+        &body,
+        "token",
+        chrono::Utc::now(),
+    );
+    st.begin(&rec).unwrap();
+    // The index entry, as settle_releasing writes it first.
+    let entry = d.path().join("releasing").join(rid);
+    std::fs::write(&entry, b"").unwrap();
+    assert!(st.releasing().unwrap().is_empty(), "nothing owed yet");
+    assert!(entry.exists(), "kept while the record is running");
+    let owed = super::PendingRelease {
+        outcome: "ready".into(),
+        read_back: None,
+    };
+    st.settle_releasing(rid, &crate::answer::Answer::unknown(), &owed)
+        .unwrap();
+    let found = st.releasing().unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].release_pending.as_ref(), Some(&owed));
+    st.released(rid).unwrap();
+    assert!(st.releasing().unwrap().is_empty());
+    assert!(!entry.exists(), "cleared once released");
+}

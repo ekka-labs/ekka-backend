@@ -171,6 +171,8 @@ async fn run(path: PathBuf) -> Result<(), String> {
     // The Enclave's claim socket is `enclave.sock` beside the adapter's own.
     // The operation records: an unsafe or unreadable store stops the adapter.
     let store = std::sync::Arc::new(store::Store::open(&c.state_dir, uid)?);
+    // Held until the process ends: one adapter per state folder.
+    let _state_lock = store::lock_state_dir(&c.state_dir)?;
     let driver = std::sync::Arc::new(driver::Backend {
         gateway,
         tokens,
@@ -188,6 +190,8 @@ async fn run(path: PathBuf) -> Result<(), String> {
         uid,
         std::sync::Arc::new(chrono::Utc::now),
     )?);
+    // Every release a settled change still owes, before the first call.
+    driver.release_pending().await;
     let listener = socket::bind(&c.socket_path, uid)?;
     tracing::info!(socket = %c.socket_path.display(), "listening");
     server::serve(

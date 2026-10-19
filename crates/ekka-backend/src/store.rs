@@ -60,11 +60,22 @@ pub struct Record {
     pub operation_id_header: String,
     /// When it was admitted, RFC 3339 UTC.
     pub admitted_at: String,
-    /// When it was last sent, RFC 3339 UTC: written, durably, BEFORE each
-    /// send (the first is its admission). A settle marker counts only for a
-    /// gateway restarted after this, so no send of it can be in the gateway.
+    /// When its latest send STARTED, RFC 3339 UTC: written, durably,
+    /// immediately before the gateway call, with nothing awaited between.
+    /// None means it was never sent.
     #[serde(default)]
     pub last_sent_at: Option<String>,
+    /// The adapter process that started that send: random per process
+    /// start, never reused.
+    #[serde(default)]
+    pub last_send_boot: Option<String>,
+    /// When that send ENDED (the gateway call returned, whatever it
+    /// answered), RFC 3339 UTC. A start with no end after it is a send still
+    /// in flight, or one whose process died during it. A settle marker
+    /// counts only for a gateway restarted after the send ended, or, when it
+    /// never ended, after the process that sent it was gone.
+    #[serde(default)]
+    pub last_send_ended_at: Option<String>,
     pub state: State,
     /// The backend's id for the desk, written before a change whose
     /// read-back must name it (a delete: once the desk is gone it cannot be
@@ -74,6 +85,41 @@ pub struct Record {
     /// The final answer, once settled.
     #[serde(default)]
     pub answer: Option<Answer>,
+    /// A settled change whose claim is not released yet: written WITH its
+    /// answer, cleared once the Enclave released the desk. Retried at every
+    /// call and at startup, never by sending the change again.
+    #[serde(default)]
+    pub release_pending: Option<PendingRelease>,
+    /// What the grant APPROVED, written at admission while the token was
+    /// verified: a create's later read-back checks the desk against these,
+    /// never against a token re-verified then (a Govern key rotated since
+    /// must not strand a desk). Our own store, the same trust as the token
+    /// kept beside it.
+    #[serde(default)]
+    pub approved: Option<Approved>,
+}
+
+/// A create's approved pins, from its verified grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Approved {
+    /// The approved policy's digest.
+    pub policy_digest: String,
+    /// Each of the create's providers, by name, to the configuration digest
+    /// the grant pins for it.
+    pub provider_config_digests: std::collections::BTreeMap<String, String>,
+}
+
+/// The release a settled change still owes the Enclave: its outcome and
+/// read-back, as the claim socket takes them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingRelease {
+    /// `ready`, `refused` or `unknown`.
+    pub outcome: String,
+    /// The read-back, in its wire form, for a `ready` release.
+    #[serde(default)]
+    pub read_back: Option<serde_json::Value>,
 }
 
 impl Record {
@@ -122,6 +168,8 @@ pub enum StoreError {
 pub struct Store {
     dir: PathBuf,
     running: PathBuf,
+    /// One empty file per settled change whose release is pending.
+    releasing: PathBuf,
     /// Tests only: this many settle writes fail.
     #[cfg(test)]
     pub(crate) fail_settles: std::sync::atomic::AtomicUsize,
@@ -130,6 +178,36 @@ pub struct Store {
 /// A lowercase hyphenated UUID: the only names a record file has.
 fn plain_id(id: &str) -> bool {
     uuid::Uuid::parse_str(id).is_ok_and(|u| u.hyphenated().to_string() == id)
+}
+
+/// ONE ADAPTER PER STATE FOLDER, held for the process's life: an exclusive
+/// lock on `<state_dir>/adapter.lock`. Recovery's rule for a send with no
+/// end from another boot ("its process was gone before this one started")
+/// holds only if two adapters never share the folder.
+///
+/// # Errors
+/// `STATE_IN_USE` when another adapter holds it; `STORE_UNAVAILABLE` when the
+/// lock file cannot be opened. Either way the adapter does not start.
+pub fn lock_state_dir(state_dir: &Path) -> Result<std::fs::File, String> {
+    let path = state_dir.join("adapter.lock");
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|e| format!("STORE_UNAVAILABLE: {}: {e}", path.display()))?;
+    match f.try_lock() {
+        Ok(()) => Ok(f),
+        Err(std::fs::TryLockError::WouldBlock) => Err(format!(
+            "STATE_IN_USE: another adapter holds {}; one adapter per state folder",
+            state_dir.display()
+        )),
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(format!("STORE_UNAVAILABLE: {}: {e}", path.display()))
+        }
+    }
 }
 
 impl Store {
@@ -141,7 +219,13 @@ impl Store {
     pub fn open(state_dir: &Path, uid: u32) -> Result<Self, String> {
         let dir = state_dir.join("operations");
         let running = state_dir.join("running");
-        for d in [state_dir, dir.as_path(), running.as_path()] {
+        let releasing = state_dir.join("releasing");
+        for d in [
+            state_dir,
+            dir.as_path(),
+            running.as_path(),
+            releasing.as_path(),
+        ] {
             if !d.exists() {
                 std::fs::DirBuilder::new()
                     .mode(0o700)
@@ -161,6 +245,7 @@ impl Store {
         Ok(Self {
             dir,
             running,
+            releasing,
             #[cfg(test)]
             fail_settles: std::sync::atomic::AtomicUsize::new(0),
         })
@@ -236,6 +321,42 @@ impl Store {
     /// # Errors
     /// The record is missing or the write fails; it then stays `running`.
     pub fn settle(&self, request_id: &str, answer: &Answer) -> Result<(), StoreError> {
+        self.settle_with(request_id, answer, None)
+    }
+
+    /// Settle `request_id` with its answer AND the release it now owes, in
+    /// one write: indexed as releasing BEFORE the record, so a crash between
+    /// the two leaves an entry with nothing owed (skipped), never a release
+    /// owed that no index names.
+    ///
+    /// # Errors
+    /// The index or the record cannot be written; it then stays `running`.
+    pub fn settle_releasing(
+        &self,
+        request_id: &str,
+        answer: &Answer,
+        release: &PendingRelease,
+    ) -> Result<(), StoreError> {
+        if !plain_id(request_id) {
+            return Err(StoreError::Io("not a request id".into()));
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(self.releasing.join(request_id))
+            .and_then(|_| std::fs::File::open(&self.releasing)?.sync_all())
+            .map_err(|e| StoreError::Io(e.to_string()))?;
+        self.settle_with(request_id, answer, Some(release))
+    }
+
+    fn settle_with(
+        &self,
+        request_id: &str,
+        answer: &Answer,
+        release: Option<&PendingRelease>,
+    ) -> Result<(), StoreError> {
         #[cfg(test)]
         {
             use std::sync::atomic::Ordering;
@@ -250,6 +371,9 @@ impl Store {
             .ok_or_else(|| StoreError::Io("no record".into()))?;
         rec.state = State::Settled;
         rec.answer = Some(answer.clone());
+        if let Some(r) = release {
+            rec.release_pending = Some(r.clone());
+        }
         self.replace(&rec)?;
         // Out of the index AFTER the record settled: a crash between the two
         // leaves an entry whose record is settled, which is skipped.
@@ -274,7 +398,9 @@ impl Store {
         self.replace(&rec)
     }
 
-    /// Note that `request_id` is being sent again, at `at`, BEFORE it is.
+    /// Note that `request_id`'s send STARTS, at `at`, in process `boot`,
+    /// immediately BEFORE the gateway call. Its end is cleared: the send is
+    /// in flight until [`Store::note_send_ended`].
     ///
     /// # Errors
     /// The record is missing or the write fails: then it is not sent.
@@ -282,6 +408,7 @@ impl Store {
         &self,
         request_id: &str,
         at: chrono::DateTime<chrono::Utc>,
+        boot: &str,
     ) -> Result<(), StoreError> {
         let mut rec = self
             .get(request_id)?
@@ -289,7 +416,95 @@ impl Store {
         // Full precision: a restart in the same second, before the send,
         // must not pass for one after it.
         rec.last_sent_at = Some(at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true));
+        rec.last_send_boot = Some(boot.to_string());
+        rec.last_send_ended_at = None;
         self.replace(&rec)
+    }
+
+    /// Note that `request_id`'s send ENDED, at `at`: the gateway call
+    /// returned, whatever it answered.
+    ///
+    /// # Errors
+    /// The record is missing or the write fails: the send then stays in
+    /// flight, so no marker counts for it while this process runs.
+    pub fn note_send_ended(
+        &self,
+        request_id: &str,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), StoreError> {
+        let mut rec = self
+            .get(request_id)?
+            .ok_or_else(|| StoreError::Io("no record".into()))?;
+        rec.last_send_ended_at = Some(at.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true));
+        self.replace(&rec)
+    }
+
+    /// The release `request_id` owes is now `release` (a retry that must
+    /// send another outcome).
+    ///
+    /// # Errors
+    /// The record is missing or the write fails.
+    pub fn note_release(
+        &self,
+        request_id: &str,
+        release: &PendingRelease,
+    ) -> Result<(), StoreError> {
+        let mut rec = self
+            .get(request_id)?
+            .ok_or_else(|| StoreError::Io("no record".into()))?;
+        rec.release_pending = Some(release.clone());
+        self.replace(&rec)
+    }
+
+    /// `request_id`'s release is done: cleared from the record, then from
+    /// the index.
+    ///
+    /// # Errors
+    /// The record is missing or the write fails: the release stays owed,
+    /// and its retry finds the desk already released.
+    pub fn released(&self, request_id: &str) -> Result<(), StoreError> {
+        let mut rec = self
+            .get(request_id)?
+            .ok_or_else(|| StoreError::Io("no record".into()))?;
+        rec.release_pending = None;
+        self.replace(&rec)?;
+        match std::fs::remove_file(self.releasing.join(request_id)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                tracing::warn!(request_id, error = %e, "releasingIndexNotCleared");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Every settled change that still owes a release, found through the
+    /// index. An entry whose record is settled owing nothing is cleared; one
+    /// whose record is still running is kept.
+    ///
+    /// # Errors
+    /// The index cannot be read, or a record it names cannot.
+    pub fn releasing(&self) -> Result<Vec<Record>, StoreError> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(&self.releasing).map_err(|e| StoreError::Io(e.to_string()))? {
+            let e = e.map_err(|e| StoreError::Io(e.to_string()))?;
+            let id = e.file_name().to_string_lossy().to_string();
+            if !plain_id(&id) {
+                continue;
+            }
+            match self.get(&id)? {
+                Some(rec) if rec.release_pending.is_some() => out.push(rec),
+                // Still running: it may be between its index entry and its
+                // settle write (`settle_releasing`). The entry is kept, or
+                // the release it is about to owe would have no index.
+                Some(rec) if rec.state == State::Running => {}
+                // Settled owing nothing, or no record: nothing to retry.
+                _ => {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+        out.sort_by(|a, b| a.admitted_at.cmp(&b.admitted_at));
+        Ok(out)
     }
 
     /// Every change on `desk` still `running`, found through the index.
@@ -368,9 +583,13 @@ pub fn running(
         // Noted by the driver before the first send, after its claim and
         // every check: none means it was never sent.
         last_sent_at: None,
+        last_send_boot: None,
+        last_send_ended_at: None,
         state: State::Running,
         backend_id: None,
         answer: None,
+        release_pending: None,
+        approved: None,
     }
 }
 
