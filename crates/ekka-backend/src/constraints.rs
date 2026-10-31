@@ -119,7 +119,7 @@ pub(crate) fn check(value: &Value) -> Result<(), String> {
         "policy_baseline.network.allowed_cidrs",
         &n.allowed_cidrs,
         0,
-        16,
+        64,
         is_cidr,
     )?;
     if n.provider_added != "listed_only" {

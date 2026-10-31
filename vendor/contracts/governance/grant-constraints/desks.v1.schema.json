@@ -111,13 +111,13 @@
             },
             "allowed_cidrs": {
               "type": "array",
-              "maxItems": 16,
+              "maxItems": 64,
               "uniqueItems": true,
               "items": {
                 "type": "string",
                 "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})/([0-9]|[12][0-9]|3[0-2])$"
               },
-              "description": "Address ranges a network rule may name. Empty means none: a rule names hosts."
+              "description": "Address ranges a network rule may name. Empty means none: a rule names hosts. Up to 64, so a discovery window can name the public IPv4 internet as ranges that leave out loopback, link-local, private and multicast space (51 of them; NVIDIA OpenShell refuses 0.0.0.0/0 as one range)."
             },
             "provider_added": {
               "const": "listed_only",

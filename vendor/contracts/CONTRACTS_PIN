@@ -1,4 +1,4 @@
-contracts v0.67.1
+contracts v0.73.0
 Copied unchanged by scripts/vendor-contracts.sh. Do not hand-edit these files.
 791b989aaf0028c9005a62de2a2b89f855b6cb403e616d4d8ecb9eaf419b453a  backend/adapter-config.v1.schema.json
 7b32085fc76d0391c4c285d0c6a7fb1b74cfcb224d7beffdc96917f85339ddcc  backend/backend-v1.schema.json
@@ -40,5 +40,5 @@ ff6620074338539528708fc0a02ac6b26de7b1568cf86846f997072c19e99f41  backend/sample
 d40204a2fa44cebf80c42506d61363ac34e5319c9c69a652a390aa5b2e8e8e2c  backend/settle-hold.v1.schema.json
 afb6b55d23d4b109bbaeafadb64161105243027693a0a24470e6cf4aff67abf0  backend/settle-marker.v1.schema.json
 610db087a15b434ab444180ebf694a5d135a8a5f6eacc5975730532be0c5aaa4  governance/gate-token.schema.json
-5dd06ee2ae7e0bcc75d09202a6dcca138991b66df729c918fa76d74e7fb20ac1  governance/grant-constraints/desks.v1.schema.json
+e2ba140831e6b2a7ca7027121498cc1a2d72461d070d9e8a34a27f53f5409b48  governance/grant-constraints/desks.v1.schema.json
 f327d5cfbacc55a4ad23199f7ba4e3d772acae76c4a7ab4e63fd26e7f3404848  governance/grant-constraints/samples/desks.v1.json

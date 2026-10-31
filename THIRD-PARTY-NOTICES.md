@@ -4565,7 +4565,7 @@ Community Data License Agreement Permissive 2.0
 ================================================================================
 
 Applies to:
-  * webpki-roots 1.0.9 (https://github.com/rustls/webpki-roots)
+  * webpki-roots 1.0.11 (https://github.com/rustls/webpki-roots)
 
 # Community Data License Agreement - Permissive - Version 2.0
 
@@ -4676,7 +4676,7 @@ ISC License
 ================================================================================
 
 Applies to:
-  * rustls-webpki 0.103.15 (https://github.com/rustls/webpki)
+  * rustls-webpki 0.103.16 (https://github.com/rustls/webpki)
 
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -5328,7 +5328,7 @@ MIT License
 ================================================================================
 
 Applies to:
-  * pulldown-cmark 0.13.4 (https://github.com/raphlinus/pulldown-cmark)
+  * pulldown-cmark 0.13.6 (https://github.com/raphlinus/pulldown-cmark)
 
 The MIT License
 

@@ -183,7 +183,7 @@ fn the_mirror_is_the_vendored_schema() {
     assert_eq!(p["provider_config_digests"]["maxProperties"], 16);
     assert_eq!(lim(&n["properties"]["allowed_hosts"]), (0, 64));
     assert_eq!(lim(&n["properties"]["allowed_ports"]), (1, 16));
-    assert_eq!(lim(&n["properties"]["allowed_cidrs"]), (0, 16));
+    assert_eq!(lim(&n["properties"]["allowed_cidrs"]), (0, 64));
     assert_eq!(n["properties"]["provider_added"]["const"], "listed_only");
     assert_eq!(p["requires_role"]["const"], "admin");
     let must: Vec<&str> = b["properties"]["must_equal"]["items"]["enum"]
@@ -214,4 +214,19 @@ fn the_mirror_is_the_vendored_schema() {
         n["properties"]["allowed_cidrs"]["items"]["pattern"],
         "^((25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})/([0-9]|[12][0-9]|3[0-2])$"
     );
+}
+
+/// A grant names up to 64 address ranges, enough for a discovery window's public internet; 65 are refused by name.
+#[test]
+fn a_grant_holds_up_to_64_address_ranges() {
+    let mut g = sample();
+    g["policy_baseline"]["network"]["allowed_cidrs"] = json!((0..64)
+        .map(|i| format!("10.{i}.0.0/16"))
+        .collect::<Vec<_>>());
+    check(&g).unwrap();
+    g["policy_baseline"]["network"]["allowed_cidrs"] = json!((0..65)
+        .map(|i| format!("10.{i}.0.0/16"))
+        .collect::<Vec<_>>());
+    let err = check(&g).unwrap_err();
+    assert!(err.contains("allowed_cidrs"), "{err}");
 }

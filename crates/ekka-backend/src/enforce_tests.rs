@@ -545,3 +545,113 @@ fn a_create_repo_is_the_contracts_empty_field() {
     b["repo"] = json!("");
     try_create(&g, &b).unwrap();
 }
+
+/// The public IPv4 internet as the ranges a discovery window names: everything but loopback, link-local, the zero
+/// network, the private blocks, carrier-grade NAT and multicast. NVIDIA OpenShell refuses `0.0.0.0/0` as one range.
+const PUBLIC_INTERNET: [&str; 51] = [
+    "1.0.0.0/8",
+    "2.0.0.0/7",
+    "4.0.0.0/6",
+    "8.0.0.0/7",
+    "11.0.0.0/8",
+    "12.0.0.0/6",
+    "16.0.0.0/4",
+    "32.0.0.0/3",
+    "64.0.0.0/3",
+    "96.0.0.0/6",
+    "100.0.0.0/10",
+    "100.128.0.0/9",
+    "101.0.0.0/8",
+    "102.0.0.0/7",
+    "104.0.0.0/5",
+    "112.0.0.0/5",
+    "120.0.0.0/6",
+    "124.0.0.0/7",
+    "126.0.0.0/8",
+    "128.0.0.0/3",
+    "160.0.0.0/5",
+    "168.0.0.0/8",
+    "169.0.0.0/9",
+    "169.128.0.0/10",
+    "169.192.0.0/11",
+    "169.224.0.0/12",
+    "169.240.0.0/13",
+    "169.248.0.0/14",
+    "169.252.0.0/15",
+    "169.255.0.0/16",
+    "170.0.0.0/7",
+    "172.0.0.0/12",
+    "172.32.0.0/11",
+    "172.64.0.0/10",
+    "172.128.0.0/9",
+    "173.0.0.0/8",
+    "174.0.0.0/7",
+    "176.0.0.0/4",
+    "192.0.0.0/9",
+    "192.128.0.0/11",
+    "192.160.0.0/13",
+    "192.169.0.0/16",
+    "192.170.0.0/15",
+    "192.172.0.0/14",
+    "192.176.0.0/12",
+    "192.192.0.0/10",
+    "193.0.0.0/8",
+    "194.0.0.0/7",
+    "196.0.0.0/6",
+    "200.0.0.0/5",
+    "208.0.0.0/4",
+];
+
+/// A discovery desk's policy: the baseline's filesystem, Landlock and process, and one host-less rule that relays
+/// (never decrypts) any public address on 443 and 80, so every connection is logged and none is refused.
+fn discovery_policy() -> Value {
+    let mut p = policy();
+    p["networkPolicies"] = json!({
+        "discovery": {
+            "name": "discovery",
+            "endpoints": [{ "allowedIps": PUBLIC_INTERNET.to_vec(), "ports": [443, 80], "tls": "NETWORK_TLS_MODE_SKIP",
+                            "enforcement": ENFORCE }]
+        }
+    });
+    p
+}
+
+/// A grant may name 64 ranges; a discovery window names 51. The create passes with the 51
+/// ranges and ports 80 and 443 in the grant, and is refused with any one range or port missing from it.
+#[test]
+fn a_discovery_desk_reaches_the_public_internet_only_inside_the_grant() {
+    let mut grant_json: Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../vendor/contracts/governance/grant-constraints/samples/desks.v1.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    grant_json["policy_digests"] = json!([policy_digest(&discovery_policy()).unwrap()]);
+    grant_json["policy_baseline"]["network"]["allowed_cidrs"] = json!(PUBLIC_INTERNET.to_vec());
+    grant_json["policy_baseline"]["network"]["allowed_ports"] = json!([80, 443]);
+    let g = grant(Some(&grant_json)).unwrap();
+    try_create(&g, &create_body(&discovery_policy())).unwrap();
+
+    let mut short = grant_json.clone();
+    short["policy_baseline"]["network"]["allowed_cidrs"] = json!(PUBLIC_INTERNET[1..].to_vec());
+    assert_eq!(
+        try_create(
+            &grant(Some(&short)).unwrap(),
+            &create_body(&discovery_policy())
+        ),
+        Err(Code::ConstraintPolicyBaseline),
+        "a range the grant does not name"
+    );
+    let mut no_80 = grant_json.clone();
+    no_80["policy_baseline"]["network"]["allowed_ports"] = json!([443]);
+    assert!(
+        try_create(
+            &grant(Some(&no_80)).unwrap(),
+            &create_body(&discovery_policy())
+        )
+        .is_err(),
+        "a port the grant does not name"
+    );
+}
