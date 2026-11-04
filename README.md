@@ -194,7 +194,7 @@ The release is OWED from the moment the answer is written: the record names it i
 | `policy_set` | GetSandbox (the creation policy), UpdateConfig at `expected_resource_version`, then reads until the new revision is loaded | the new `policy_digest` and `resource_version` |
 | `provider_detach` | DetachSandboxProvider at `expected_resource_version`, then reads | the remaining `providers`; released with the new `providers_digest` |
 | `status` | GetSandbox, GetSandboxPolicyStatus, and each provider's record and profile | the desk's facts and `providers_digest` |
-| `policy_get` | GetSandbox, GetSandboxPolicyStatus | `policy_digest` and `resource_version` |
+| `policy_get` | GetSandbox, GetSandboxPolicyStatus | `policy_digest`, `resource_version`, and the loaded `policy` itself in the canonical form its digest is computed from (left out when its JSON is over 64 KiB; contracts 0.75.0) |
 
 - **A create** carries the label `ekka.ai/desk=true`, the label `ekka.ai/operation=<request id>`, and the annotation `ekka.ai/desk-providers` naming the providers it is made with. The Enclave's auto-registration reads that annotation as the desk's required providers. A person cannot rewrite it later, because people's own desk sign-ins only read. A create sends no command (the image's own) and no `repo`: a create that carries one is refused `FIELD_NOT_ALLOWED`, since nothing on a desk reads it (contracts 0.65.0).
 - **A detach** of a provider the desk's agent requires is refused `DESK_PROVIDER_REQUIRED` before the desk backend is called. The list comes from the Enclave's claim answer, never from a label or the request. An Enclave that names no list refuses every detach.
