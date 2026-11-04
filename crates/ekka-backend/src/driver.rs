@@ -183,19 +183,36 @@ impl Backend {
         bearer: &str,
         name: &str,
     ) -> Result<Option<(Sandbox, DeskFacts)>, GatewayError> {
+        self.facts_with(bearer, name, false).await
+    }
+
+    /// [`Self::facts`], and with `with_policy` the loaded policy itself beside its digest: only the policy read asks,
+    /// so no other answer carries it.
+    async fn facts_with(
+        &self,
+        bearer: &str,
+        name: &str,
+        with_policy: bool,
+    ) -> Result<Option<(Sandbox, DeskFacts)>, GatewayError> {
         let Some(sb) = self.gateway.sandbox(bearer, name).await? else {
             return Ok(None);
         };
-        let (sb, policy_digest) = match self.gateway.policy_status(bearer, name).await {
+        let (sb, policy_digest, policy) = match self.gateway.policy_status(bearer, name).await {
             Ok(status) => {
                 let rev = status.revision.unwrap_or_default();
                 // The wall the desk enforces is the LOADED revision; while a
                 // newer one is not loaded, its digest is not reported, as the
                 // Enclave reports it.
-                let digest = (rev.version == status.active_version)
-                    .then(|| rev.policy.as_ref().and_then(|p| message_digest(POLICY, p)))
+                let loaded = (rev.version == status.active_version)
+                    .then_some(rev.policy.as_ref())
                     .flatten();
-                (sb, digest)
+                let digest = loaded.and_then(|p| message_digest(POLICY, p));
+                // The document beside its digest, in the same canonical form, and only when it fits the bound.
+                let policy = (with_policy && digest.is_some())
+                    .then(|| loaded.and_then(|p| message_json(POLICY, p)))
+                    .flatten()
+                    .filter(within_policy_bound);
+                (sb, digest, policy)
             }
             // Found a moment ago, its policy now NOT_FOUND. GetSandbox is
             // asked again, and only its NOT_FOUND makes the desk gone (a
@@ -207,7 +224,7 @@ impl Backend {
             // one is done yet.
             Err(GatewayError::NotFound) => match self.gateway.sandbox(bearer, name).await? {
                 None => return Ok(None),
-                Some(now) => (now, None),
+                Some(now) => (now, None, None),
             },
             Err(e) => return Err(e),
         };
@@ -216,6 +233,7 @@ impl Backend {
             backend_id: is_uuid(&meta.id).then(|| meta.id.clone()),
             resource_version: Some(meta.resource_version.to_string()),
             policy_digest,
+            policy,
             providers_digest: None,
             providers: Some(
                 sb.spec
@@ -259,13 +277,13 @@ impl Backend {
         }
     }
 
-    /// `policy_get`: the desk's policy digest and version.
+    /// `policy_get`: the desk's policy digest and version, and the live policy itself (contracts 0.75.0).
     pub async fn policy_get(&self, a: &Admitted, name: &str) -> Answer {
         let bearer = match self.bearer(a).await {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        match self.facts(&bearer, name).await {
+        match self.facts_with(&bearer, name, true).await {
             Ok(Some((_, facts))) if facts.policy_digest.is_some() => Answer::ready(DeskFacts {
                 providers: None,
                 ..facts
@@ -1291,8 +1309,19 @@ fn is_uuid(s: &str) -> bool {
 #[path = "driver_tests.rs"]
 pub(crate) mod tests;
 
+/// A policy document is sent only when its JSON is at most [`crate::answer::POLICY_MAX_BYTES`] (contracts 0.75.0,
+/// `result.policy`); a larger one is left out and its digest still names it.
+fn within_policy_bound(v: &Value) -> bool {
+    serde_json::to_vec(v).is_ok_and(|b| b.len() <= crate::answer::POLICY_MAX_BYTES)
+}
+
 /// How long a change is read back, against a gateway that takes its time.
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[path = "driver_settle_tests.rs"]
 mod settle_tests;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[path = "driver_policy_read_tests.rs"]
+mod policy_read_tests;

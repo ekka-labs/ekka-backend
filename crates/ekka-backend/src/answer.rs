@@ -64,6 +64,10 @@ pub enum Code {
     NotApplied,
 }
 
+/// The largest policy, as serialized JSON, a policy read sends; a larger one is left out and its digest still names
+/// it (contracts 0.75.0, `result.policy`).
+pub const POLICY_MAX_BYTES: usize = 65_536;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Answer {
     pub delivery: Delivery,
@@ -92,6 +96,10 @@ pub struct DeskFacts {
     pub resource_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_digest: Option<String>,
+    /// The live policy itself, in the canonical form `policy_digest` is computed from. Only the policy read sends
+    /// it, only beside its digest, and only when its JSON is at most [`POLICY_MAX_BYTES`] (contracts 0.75.0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub providers_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

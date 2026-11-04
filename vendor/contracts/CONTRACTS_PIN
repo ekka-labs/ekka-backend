@@ -1,7 +1,7 @@
-contracts v0.73.0
+contracts v0.75.0
 Copied unchanged by scripts/vendor-contracts.sh. Do not hand-edit these files.
 791b989aaf0028c9005a62de2a2b89f855b6cb403e616d4d8ecb9eaf419b453a  backend/adapter-config.v1.schema.json
-7b32085fc76d0391c4c285d0c6a7fb1b74cfcb224d7beffdc96917f85339ddcc  backend/backend-v1.schema.json
+95f3f5a07e5d9ce7ac8442f4c034843c045553c527ec3c92743b03ac898199e1  backend/backend-v1.schema.json
 687a6e714b06c9ec4b24f3712846b658994234bfd2e4fe4db657bb2ec1270da6  backend/desk-claim.v1.schema.json
 da34c5a9fe283e6b4a5ad5b2fe0bb8eb13c79a48c3bce8a55e37f9efef68fcf5  backend/operations.json
 3203e9c7fdb63b4a4cc91d78122b0474e928e5c5e15f6dacaad3194c4227ed07  backend/samples/adapter-config.json
@@ -26,6 +26,7 @@ d0e9c9f94994829f395d04d8e98972297346d0a4bc7ee238dcf20ef4b34cf223  backend/sample
 776f5c9e75112ced4919025525d0c6de508c0b3a3ae7d44cddc83301e6267898  backend/samples/desk-claim.release.result-pins-retired.json
 ef80846f61b715dcf2bbd46650b4624d520c5bba92452d8ae3aa09cee21f5f38  backend/samples/desk-claim.release.result.json
 95ffabc566f5b5730ce52300e37299d4ccd6f3ce7e4940f48a085753adc9f932  backend/samples/result.duplicate-refused.json
+320c572e1c3460053d4722a3821e3d5e36d899f3915d0ce82551b7ebd887d898  backend/samples/result.policy-ready.json
 560f42aa4667f21b83479a3d2f23a658db92e96db7fe38a62b7ad5cfb1ec6950  backend/samples/result.ready.json
 d73533f3c3df1db4b92e25600284daf494444393d84663a1844131821825e221  backend/samples/result.refused-desk-busy.json
 f148fe448e1e9fd0c0c161ecb0981971374151b0ab1a486372ec671c43427cef  backend/samples/result.refused-not-applied.json

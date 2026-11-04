@@ -403,6 +403,12 @@
         "policy_digest": {
           "$ref": "#/$defs/digest"
         },
+        "policy": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "description": "The desk's live policy: the revision it has LOADED, as `openshell.sandbox.v1.SandboxPolicy` in proto3 JSON, the canonical form `policy_digest` is computed from. Sent only by the policy read (`GET /v1/desks/{name}/policy`, operation `policy_get`), only with outcome `ready` and beside its `policy_digest`, and only when its JSON is at most 65536 bytes: a larger policy is left out and `policy_digest` still names it. A policy names paths, hosts and ports, never a secret."
+        },
         "providers_digest": {
           "$ref": "#/$defs/digest",
           "description": "On `status`: EKKA's digest of the desk's providers, computed by the adapter over the gateway's provider records, so the Enclave can re-pin after a governed disconnect."
@@ -561,8 +567,33 @@
               ]
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "refused",
+                  "unknown",
+                  "running"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "policy"
+              ]
+            }
+          }
         }
-      ]
+      ],
+      "dependencies": {
+        "policy": [
+          "policy_digest"
+        ]
+      }
     }
   }
 }
