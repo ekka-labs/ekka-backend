@@ -79,7 +79,8 @@
               "stop",
               "start",
               "status",
-              "policy_get"
+              "policy_get",
+              "discovery_evidence"
             ]
           }
         }
@@ -154,6 +155,31 @@
       "if": {
         "properties": {
           "operation": {
+            "const": "approval_mode"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "name",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/approval_mode_body"
+          }
+        },
+        "not": {
+          "required": [
+            "provider"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
             "const": "provider_connect"
           }
         }
@@ -192,9 +218,11 @@
         "policy_get",
         "policy_set",
         "provider_detach",
+        "approval_mode",
+        "discovery_evidence",
         "provider_connect"
       ],
-      "description": "Eight operations, and `provider_connect`, which is reserved: it is part of the vocabulary and answers refused, code NOT_AVAILABLE, in v1."
+      "description": "Ten operations, and `provider_connect`, which is reserved: it is part of the vocabulary and answers refused, code NOT_AVAILABLE, in v1."
     },
     "name": {
       "type": "string",
@@ -327,6 +355,22 @@
         }
       }
     },
+    "approval_mode_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "description": "Turn a discovery desk's proposal approval mode on or off. `auto`: the backend may approve the desk's own network proposals, and only while the adapter's permit for the desk's sandbox id is valid. The adapter allows it only for a desk inside the grant's open `discovery` window (its name starts with the window's `name_prefix`, its image digest is in the window's `image_digests`, every provider attached is in the window's `providers`), sets the backend's setting, reads it back as applied, and only then writes the permit. `manual`: the adapter deletes the permit first, then sets the backend's setting and reads it back; turning auto off is always allowed for a desk the adapter manages.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "auto",
+            "manual"
+          ]
+        }
+      }
+    },
     "code": {
       "enum": [
         "TOKEN_MISSING",
@@ -358,9 +402,12 @@
         "BACKEND_UNAVAILABLE",
         "BACKEND_REFUSED",
         "RESULT_MISMATCH",
-        "NOT_APPLIED"
+        "NOT_APPLIED",
+        "DESK_NOT_DISCOVERY",
+        "DISCOVERY_WINDOW_CLOSED",
+        "APPROVAL_MODE_NOT_APPLIED"
       ],
-      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the change never reached the desk; nothing changed."
+      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the change never reached the desk; nothing changed. DESK_NOT_DISCOVERY: the desk is not one a discovery window allows (no `discovery` in the grant, a name without its `name_prefix`, an image digest or a provider outside its lists), or, on the evidence read, the desk has no permit; nothing changed. DISCOVERY_WINDOW_CLOSED: the grant's `discovery` window has expired; nothing changed. APPROVAL_MODE_NOT_APPLIED: the backend's setting, read back, is not the mode asked for; the adapter wrote no permit and set the desk back to manual."
     },
     "result": {
       "type": "object",
@@ -420,6 +467,22 @@
           "items": {
             "$ref": "#/$defs/name"
           }
+        },
+        "approval_mode": {
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "description": "On an `approval_mode` answer: the desk's proposal approval mode, as the adapter read it back from the backend after setting it. Sent only with outcome `ready`."
+        },
+        "permit_expires_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+          "description": "With `approval_mode: auto` only, and always with it: when the permit the adapter wrote for the desk's sandbox id expires, UTC. The earlier of the discovery window's end and 60 minutes after the permit was written."
+        },
+        "evidence": {
+          "$ref": "./discovery-evidence.v1.schema.json",
+          "description": "On a `discovery_evidence` answer only, with outcome `ready`: what a discovery desk's network proposals and traffic showed (discovery-evidence.v1.schema.json). At most 262144 bytes (256 KiB) as JSON; a schema cannot measure that, so the adapter enforces it and a reader refuses a larger one."
         },
         "operation_id": {
           "type": "string",
@@ -582,8 +645,51 @@
           },
           "then": {
             "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "policy"
+                  ]
+                },
+                {
+                  "required": [
+                    "approval_mode"
+                  ]
+                },
+                {
+                  "required": [
+                    "permit_expires_at"
+                  ]
+                },
+                {
+                  "required": [
+                    "evidence"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "approval_mode"
+            ],
+            "properties": {
+              "approval_mode": {
+                "const": "auto"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "permit_expires_at"
+            ]
+          },
+          "else": {
+            "not": {
               "required": [
-                "policy"
+                "permit_expires_at"
               ]
             }
           }
@@ -592,6 +698,9 @@
       "dependencies": {
         "policy": [
           "policy_digest"
+        ],
+        "permit_expires_at": [
+          "approval_mode"
         ]
       }
     }

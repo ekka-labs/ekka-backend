@@ -22,3 +22,9 @@ regexes = [
 [[allowlists]]
 description = "An API gate instance id: the name of an Enclave instance, not a credential"
 regexes = ['''^enclave[0-9a-f]{8}Api$''']
+
+[[allowlists]]
+description = "The log redaction tests: each value is a made-up example in the shape of a key, there to prove it is redacted"
+paths = [
+  '''^crates/ekka-backend/src/redact_tests\.rs$''',
+]

@@ -34,6 +34,62 @@ pub(crate) struct DeskConstraints {
     pub repo_hosts: Vec<String>,
     pub policy_baseline: PolicyBaseline,
     pub requires_role: String,
+    /// The discovery window, when one is open: which desks may turn on
+    /// automatic approval of their network proposals. Absent means none may.
+    #[serde(default)]
+    pub discovery: Option<Discovery>,
+}
+
+/// The only name prefix a discovery window names (a constant of the schema).
+pub(crate) const DISCOVERY_PREFIX: &str = "discover-";
+
+/// A discovery window's limits (desks.v1 `discovery`), closed.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Discovery {
+    pub image_digests: Vec<String>,
+    pub providers: Vec<String>,
+    pub name_prefix: String,
+    pub expires_at: String,
+}
+
+impl Discovery {
+    /// When the window ends; `None` when `expires_at` is not RFC 3339 in UTC.
+    pub(crate) fn ends(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        utc(&self.expires_at)
+    }
+}
+
+/// A time as the schema writes it,
+/// `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$`, read in UTC.
+pub(crate) fn utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let b = s.as_bytes();
+    let digits =
+        |r: std::ops::Range<usize>| b.get(r).is_some_and(|d| d.iter().all(u8::is_ascii_digit));
+    let shape = b.len() >= 20
+        && digits(0..4)
+        && b[4] == b'-'
+        && digits(5..7)
+        && b[7] == b'-'
+        && digits(8..10)
+        && b[10] == b'T'
+        && digits(11..13)
+        && b[13] == b':'
+        && digits(14..16)
+        && b[16] == b':'
+        && digits(17..19)
+        && b[b.len() - 1] == b'Z'
+        && match &b[19..b.len() - 1] {
+            [] => true,
+            [b'.', f @ ..] => (1..=9).contains(&f.len()) && f.iter().all(u8::is_ascii_digit),
+            _ => false,
+        };
+    if !shape {
+        return None;
+    }
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +183,18 @@ pub(crate) fn check(value: &Value) -> Result<(), String> {
     }
     if c.requires_role != "admin" {
         return Err("requires_role must be \"admin\"".into());
+    }
+    if let Some(d) = &c.discovery {
+        list("discovery.image_digests", &d.image_digests, 1, 4, is_digest)?;
+        list("discovery.providers", &d.providers, 0, 8, is_name)?;
+        if d.name_prefix != DISCOVERY_PREFIX {
+            return Err(format!(
+                "discovery.name_prefix must be \"{DISCOVERY_PREFIX}\""
+            ));
+        }
+        if d.ends().is_none() {
+            return Err("discovery.expires_at must be an RFC 3339 time in UTC, ending in Z".into());
+        }
     }
     Ok(())
 }

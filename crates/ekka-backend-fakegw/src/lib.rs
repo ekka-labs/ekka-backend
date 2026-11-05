@@ -3,6 +3,7 @@
 //! dev-dependency only: the release image builds `-p ekka-backend` without
 //! dev-dependencies, so none of this ships.
 
+pub mod discovery;
 pub mod fake_enclave;
 pub mod fake_gateway;
 pub mod fake_issuer;

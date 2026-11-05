@@ -279,6 +279,13 @@ async fn dispatch(
             }
             Err(code) => Answer::refused(code),
         },
+        Operation::ApprovalMode => {
+            match enforce::body::<crate::driver::discovery::ApprovalModeBody>(body) {
+                Ok(m) => b.approval_mode(a, desk, &m, notes).await,
+                Err(code) => Answer::refused(code),
+            }
+        }
+        Operation::DiscoveryEvidence => b.discovery_evidence(a, desk).await,
         // Reserved in v1: providers are set at install.
         Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
     }

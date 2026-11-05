@@ -1,0 +1,54 @@
+{
+  "delivery": "first",
+  "outcome": "ready",
+  "desk_ready": true,
+  "backend_id": "7d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+  "evidence": {
+    "schema": "ekka.backend.discovery_evidence/v1",
+    "sandbox_id": "7d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+    "desk": "discover-0b3d5f7a",
+    "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "policy": {
+      "version": 1,
+      "networkPolicies": {
+        "npm_registry": {
+          "name": "npm-registry",
+          "binaries": [{ "path": "/usr/bin/node" }],
+          "endpoints": [{ "host": "registry.npmjs.org", "port": 443 }]
+        }
+      }
+    },
+    "policy_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "active_version": 4,
+    "drafts_pending": [
+      {
+        "chunk": {
+          "name": "postgres",
+          "endpoints": [{ "host": "10.0.4.12", "port": 5432 }]
+        },
+        "host": "10.0.4.12",
+        "port": 5432,
+        "binary": null,
+        "risk": ["private_address", "database_port"]
+      }
+    ],
+    "drafts_decided": [
+      {
+        "chunk": {
+          "name": "npm-registry",
+          "binaries": [{ "path": "/usr/bin/node" }],
+          "endpoints": [{ "host": "registry.npmjs.org", "port": 443 }]
+        },
+        "decision": "approved",
+        "by": "auto"
+      }
+    ],
+    "network_log": [
+      "2026-11-05T14:12:03Z OCSF NET: DENIED /usr/bin/node -> registry.npmjs.org:443",
+      "2026-11-05T14:12:41Z OCSF HTTP: ALLOWED /usr/bin/node GET registry.npmjs.org:443/express",
+      "2026-11-05T14:13:02Z OCSF NET: DENIED /usr/bin/node -> 10.0.4.12:5432"
+    ],
+    "settled": true,
+    "settle_seconds": 22
+  }
+}

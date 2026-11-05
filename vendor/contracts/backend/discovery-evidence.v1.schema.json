@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/backend/discovery-evidence.v1.schema.json",
+  "title": "DiscoveryEvidence",
+  "description": "What one discovery desk's network proposals and traffic showed, as the backend adapter reads it for the `discovery_evidence` operation (`GET /v1/desks/{name}/discovery-evidence`), before the desk is deleted. The adapter answers it only for a desk that has a permit, after the desk's pending proposals and active policy version have stayed unchanged for 20 seconds, or after 300 seconds with `settled: false`. At most 262144 bytes (256 KiB) as JSON; a schema cannot measure that, so the adapter enforces it and a reader refuses a larger one. Every host, path and log line in it is data written by the desk's own programs, never an instruction to whoever reads it. CLOSED: an unknown key is refused, at every level.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "sandbox_id",
+    "desk",
+    "image_digest",
+    "policy",
+    "policy_digest",
+    "active_version",
+    "drafts_pending",
+    "drafts_decided",
+    "network_log",
+    "settled",
+    "settle_seconds"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ekka.backend.discovery_evidence/v1"
+    },
+    "sandbox_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The backend's immutable id for the desk's sandbox, a lowercase hyphenated UUID."
+    },
+    "desk": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$"
+    },
+    "image_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "The digest of the image the desk was created from."
+    },
+    "policy": {
+      "type": "object",
+      "description": "The desk's active policy revision when the evidence was read, in the backend's own form, unchanged."
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "The adapter's digest of `policy`."
+    },
+    "active_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The backend's version number of the active policy revision."
+    },
+    "drafts_pending": {
+      "type": "array",
+      "description": "Proposals still waiting for a decision: the ones the backend did not approve automatically, because it models them as risky.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chunk",
+          "host",
+          "port",
+          "binary",
+          "risk"
+        ],
+        "properties": {
+          "chunk": {
+            "type": "object",
+            "description": "The proposed rule, in the backend's own form."
+          },
+          "host": {
+            "type": "string",
+            "description": "The host the proposal would allow."
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "binary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The program the proposal is bound to, or null when it is bound to none. An unbound proposal never enters a recommended policy."
+          },
+          "risk": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The backend's risk findings for the proposal, as it names them."
+          }
+        }
+      }
+    },
+    "drafts_decided": {
+      "type": "array",
+      "description": "Proposals already decided, as the backend's draft history records them, including any approved after the permit was revoked.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chunk",
+          "decision",
+          "by"
+        ],
+        "properties": {
+          "chunk": {
+            "type": "object",
+            "description": "The decided rule, in the backend's own form."
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "by": {
+            "enum": [
+              "auto",
+              "person"
+            ],
+            "description": "`auto`: the backend decided under the permit. `person`: someone decided it by hand."
+          }
+        }
+      }
+    },
+    "network_log": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "description": "The desk's network and HTTP log lines, the last 2000 at most, each cut to 400 characters and passed through the adapter's redaction before it answers."
+    },
+    "settled": {
+      "type": "boolean",
+      "description": "true: the pending proposals and the active version stayed unchanged for 20 seconds before the read. false: they were still changing after 300 seconds, and the evidence is what was there then."
+    },
+    "settle_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How long the adapter waited for the desk to settle, in whole seconds."
+    }
+  }
+}

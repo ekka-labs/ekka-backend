@@ -369,7 +369,7 @@ pub(crate) fn cidr_allowed(allowed: &[String], ip: &str) -> bool {
 /// for `<name>@sha256:<64 hex>`, an image from a registry; or the whole
 /// value for `sha256:<64 hex>` alone, an image the machine built itself, by
 /// its local content ID (contracts 0.62.0). Anything else is `None`.
-fn image_digest(image: &str) -> Option<String> {
+pub(crate) fn image_digest(image: &str) -> Option<String> {
     let (name, digest) = match image.rsplit_once('@') {
         Some((name, digest)) => (Some(name), digest),
         None => (None, image),
@@ -387,6 +387,57 @@ fn image_digest(image: &str) -> Option<String> {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
     (name_ok && hex_ok).then(|| format!("sha256:{hex}"))
+}
+
+/// The discovery window a call's grant opens, checked against the grant
+/// alone: the grant names one, it has not ended at `now`, and `desk` carries
+/// its name prefix. Returns the window and when it ends.
+///
+/// # Errors
+/// `DESK_NOT_DISCOVERY`: the grant names no window, or the desk's name lacks
+/// its prefix. `DISCOVERY_WINDOW_CLOSED`: the window has ended (or its end
+/// does not read).
+pub(crate) fn discovery_window<'g>(
+    g: &'g DeskConstraints,
+    desk: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<
+    (
+        &'g crate::constraints::Discovery,
+        chrono::DateTime<chrono::Utc>,
+    ),
+    Code,
+> {
+    let d = g.discovery.as_ref().ok_or(Code::DeskNotDiscovery)?;
+    let ends = d.ends().ok_or(Code::DiscoveryWindowClosed)?;
+    if now >= ends {
+        return Err(Code::DiscoveryWindowClosed);
+    }
+    if d.name_prefix != crate::constraints::DISCOVERY_PREFIX || !desk.starts_with(&d.name_prefix) {
+        return Err(Code::DeskNotDiscovery);
+    }
+    Ok((d, ends))
+}
+
+/// The desk as the backend holds it is one the window covers: an EKKA desk,
+/// made from one of the window's images, every provider attached to it one
+/// the window lists.
+///
+/// # Errors
+/// `DESK_NOT_DISCOVERY`.
+pub(crate) fn discovery_desk(
+    d: &crate::constraints::Discovery,
+    ekka_desk: bool,
+    image: &str,
+    providers: &[String],
+) -> Result<(), Code> {
+    let image_ok = image_digest(image).is_some_and(|i| d.image_digests.contains(&i));
+    let providers_ok = providers.iter().all(|p| d.providers.contains(p));
+    if ekka_desk && image_ok && providers_ok {
+        Ok(())
+    } else {
+        Err(Code::DeskNotDiscovery)
+    }
 }
 
 /// What a create asked for, to compare with the sandbox the backend made.

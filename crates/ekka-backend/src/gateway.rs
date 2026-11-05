@@ -12,13 +12,16 @@
 use std::time::Duration;
 
 use openshell_proto::openshell::datamodel::v1::{workspace_selector, Provider, WorkspaceSelector};
-use openshell_proto::openshell::sandbox::v1::SandboxPolicy;
+use openshell_proto::openshell::sandbox::v1::{
+    setting_value, GetSandboxConfigRequest, SandboxPolicy, SettingValue,
+};
 use openshell_proto::openshell::v1::{
     open_shell_client::OpenShellClient, CreateSandboxRequest, DeleteSandboxRequest,
-    DetachSandboxProviderRequest, GetProviderProfileRequest, GetProviderRequest,
+    DetachSandboxProviderRequest, DraftHistoryEntry, GetDraftHistoryRequest, GetDraftPolicyRequest,
+    GetProviderProfileRequest, GetProviderRequest, GetSandboxLogsRequest,
     GetSandboxPolicyStatusRequest, GetSandboxPolicyStatusResponse, GetSandboxRequest,
-    ListProviderProfilesRequest, ProviderProfile, Sandbox, StartSandboxRequest, StopSandboxRequest,
-    UpdateConfigRequest,
+    ListProviderProfilesRequest, PolicyChunk, ProviderProfile, Sandbox, SandboxLogLine,
+    StartSandboxRequest, StopSandboxRequest, UpdateConfigRequest,
 };
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
@@ -371,11 +374,25 @@ impl Gateway {
         bearer: &str,
         name: &str,
     ) -> Result<GetSandboxPolicyStatusResponse, GatewayError> {
+        self.policy_revision(bearer, name, 0).await
+    }
+
+    /// The sandbox's policy revision `version` (0: the newest) and the one it
+    /// has loaded.
+    ///
+    /// # Errors
+    /// The gateway's refusal.
+    pub async fn policy_revision(
+        &self,
+        bearer: &str,
+        name: &str,
+        version: u32,
+    ) -> Result<GetSandboxPolicyStatusResponse, GatewayError> {
         let req = Self::request(
             GetSandboxPolicyStatusRequest {
                 workspace_scope: self.scope(),
                 sandbox: name.to_string(),
-                version: 0,
+                version,
                 global: false,
             },
             bearer,
@@ -514,6 +531,162 @@ impl Gateway {
         )?;
         self.grpc.clone().detach_sandbox_provider(req).await?;
         Ok(())
+    }
+}
+
+/// The sandbox setting that holds how a sandbox's network proposals are
+/// approved: `manual` (a person decides) or `auto`.
+pub const APPROVAL_MODE_SETTING: &str = "proposal_approval_mode";
+
+impl Gateway {
+    /// The desk workspace this client works in.
+    #[must_use]
+    pub fn workspace(&self) -> &str {
+        &self.workspace
+    }
+
+    /// UpdateConfig with exactly one sandbox setting: `proposal_approval_mode`
+    /// set to `mode`, and nothing else (no policy, no global scope, no
+    /// delete, no merge, no annotations). `request_id` may be empty: a
+    /// best-effort return to `manual` carries none.
+    ///
+    /// # Errors
+    /// The gateway's refusal.
+    pub async fn set_approval_mode(
+        &self,
+        bearer: &str,
+        name: &str,
+        mode: &str,
+        request_id: &str,
+    ) -> Result<(), GatewayError> {
+        let req = Self::request(
+            UpdateConfigRequest {
+                workspace_scope: self.scope(),
+                sandbox: name.to_string(),
+                setting_key: APPROVAL_MODE_SETTING.to_string(),
+                setting_value: Some(SettingValue {
+                    value: Some(setting_value::Value::StringValue(mode.to_string())),
+                }),
+                request_id: request_id.to_string(),
+                ..Default::default()
+            },
+            bearer,
+        )?;
+        self.grpc.clone().update_config(req).await?;
+        Ok(())
+    }
+
+    /// The sandbox's effective `proposal_approval_mode`, read back with
+    /// GetSandboxConfig: `None` when it carries none, or not as a string.
+    ///
+    /// # Errors
+    /// The gateway's refusal.
+    pub async fn approval_mode(
+        &self,
+        bearer: &str,
+        name: &str,
+    ) -> Result<Option<String>, GatewayError> {
+        let req = Self::request(
+            GetSandboxConfigRequest {
+                workspace_scope: self.scope(),
+                name: name.to_string(),
+            },
+            bearer,
+        )?;
+        let config = self
+            .grpc
+            .clone()
+            .get_sandbox_config(req)
+            .await?
+            .into_inner();
+        Ok(config
+            .settings
+            .get(APPROVAL_MODE_SETTING)
+            .and_then(|e| e.value.as_ref())
+            .and_then(|v| match &v.value {
+                Some(setting_value::Value::StringValue(s)) => Some(s.clone()),
+                _ => None,
+            }))
+    }
+
+    /// The sandbox's draft policy chunks with `status` (`""`: all).
+    ///
+    /// # Errors
+    /// The gateway's refusal.
+    pub async fn draft_chunks(
+        &self,
+        bearer: &str,
+        name: &str,
+        status: &str,
+    ) -> Result<Vec<PolicyChunk>, GatewayError> {
+        let req = Self::request(
+            GetDraftPolicyRequest {
+                workspace_scope: self.scope(),
+                status_filter: status.to_string(),
+                sandbox: name.to_string(),
+            },
+            bearer,
+        )?;
+        Ok(self
+            .grpc
+            .clone()
+            .get_draft_policy(req)
+            .await?
+            .into_inner()
+            .chunks)
+    }
+
+    /// The sandbox's draft decision history, oldest first.
+    ///
+    /// # Errors
+    /// The gateway's refusal.
+    pub async fn draft_history(
+        &self,
+        bearer: &str,
+        name: &str,
+    ) -> Result<Vec<DraftHistoryEntry>, GatewayError> {
+        let req = Self::request(
+            GetDraftHistoryRequest {
+                workspace_scope: self.scope(),
+                sandbox: name.to_string(),
+            },
+            bearer,
+        )?;
+        Ok(self
+            .grpc
+            .clone()
+            .get_draft_history(req)
+            .await?
+            .into_inner()
+            .entries)
+    }
+
+    /// The sandbox's most recent `lines` log lines, oldest first.
+    ///
+    /// # Errors
+    /// The gateway's refusal.
+    pub async fn sandbox_logs(
+        &self,
+        bearer: &str,
+        name: &str,
+        lines: u32,
+    ) -> Result<Vec<SandboxLogLine>, GatewayError> {
+        let req = Self::request(
+            GetSandboxLogsRequest {
+                workspace_scope: self.scope(),
+                sandbox: name.to_string(),
+                lines,
+                ..Default::default()
+            },
+            bearer,
+        )?;
+        Ok(self
+            .grpc
+            .clone()
+            .get_sandbox_logs(req)
+            .await?
+            .into_inner()
+            .logs)
     }
 }
 

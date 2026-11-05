@@ -23,7 +23,7 @@
 //! NOT released, so the desk stays held and no person can release it by
 //! hand; only recovery (`recover.rs`) frees it. A
 //! change that completed but whose desk does not match answers `unknown`.
-//! Reads (`status`, `policy_get`) take no claim.
+//! Reads (`status`, `policy_get`, `discovery_evidence`) take no claim.
 
 use openshell_proto::openshell::sandbox::v1::SandboxPolicy;
 use openshell_proto::openshell::v1::{
@@ -84,6 +84,12 @@ pub struct Backend {
     /// How long after its admission a change is read back:
     /// [`settle_window`] of the configured deadline.
     pub settle_for: std::time::Duration,
+    /// The discovery permits (`permits.rs`): written only by `approval_mode`
+    /// after the backend reads `auto` back, removed before `manual` and
+    /// before a delete.
+    pub permits: std::sync::Arc<crate::permits::Permits>,
+    /// How `discovery_evidence` waits for a desk to settle.
+    pub evidence: discovery::EvidenceTimings,
 }
 
 /// Where the driver writes a change's answer before it releases the claim.
@@ -241,6 +247,7 @@ impl Backend {
                     .map(|s| s.providers.clone())
                     .unwrap_or_default(),
             ),
+            ..DeskFacts::default()
         };
         Ok(Some((sb, facts)))
     }
@@ -881,6 +888,12 @@ impl Backend {
                     .await;
             }
         };
+        // No discovery permit outlives its desk: removed before the delete
+        // is sent, under the claim (a permit is only written under it).
+        if let Err(why) = self.drop_permits(name, &id) {
+            tracing::error!(desk = %name, why, "discoveryPermitNotRemoved");
+            return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
+        }
         if !notes.backend_id(&id) {
             return self.refuse_claimed(a, name, Code::BackendUnavailable).await;
         }
@@ -1288,6 +1301,7 @@ impl Backend {
                     _ => Answer::running(&a.verified().request_id),
                 }
             }
+            Operation::ApprovalMode => self.approval_recover(a, &bearer, desk, body, send).await,
             _ => Answer::running(&a.verified().request_id),
         }
     }
@@ -1308,6 +1322,10 @@ fn is_uuid(s: &str) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[path = "driver_tests.rs"]
 pub(crate) mod tests;
+
+/// `approval_mode` and `discovery_evidence`.
+#[path = "discovery.rs"]
+pub(crate) mod discovery;
 
 /// A policy document is sent only when its JSON is at most [`crate::answer::POLICY_MAX_BYTES`] (contracts 0.75.0,
 /// `result.policy`); a larger one is left out and its digest still names it.

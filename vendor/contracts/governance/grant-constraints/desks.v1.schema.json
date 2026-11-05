@@ -127,6 +127,38 @@
         }
       }
     },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_digests", "providers", "name_prefix", "expires_at"],
+      "description": "OPTIONAL: an open discovery window, written by the installer for a limited time. Absent means no desk may enter auto approval mode. The adapter allows `approval_mode` `auto` only for a desk whose name starts with `name_prefix`, whose image digest is in `image_digests`, and whose every attached provider is in `providers`, else it refuses DESK_NOT_DISCOVERY; after `expires_at` it refuses DISCOVERY_WINDOW_CLOSED. It widens nothing else: a create is still held to every other limit here.",
+      "properties": {
+        "image_digests": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/digest" },
+          "description": "The images a discovery desk may be created from, by digest."
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/name" },
+          "description": "The only providers a discovery desk may have attached. Empty means none."
+        },
+        "name_prefix": {
+          "const": "discover-",
+          "description": "Every discovery desk's name starts with it, so an ordinary desk can never be one."
+        },
+        "expires_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+          "description": "When the window closes, UTC. A permit never outlives it."
+        }
+      }
+    },
     "requires_role": {
       "const": "admin",
       "description": "The organization role a run must have been started by for Govern to sign a token from this grant. Govern checks it when the grant is used; the adapter does not."

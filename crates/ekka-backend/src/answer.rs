@@ -62,11 +62,21 @@ pub enum Code {
     /// A create that never reached the desk: a settle marker and the
     /// gateway's own read-back after its restart prove nothing was created.
     NotApplied,
+    /// `approval_mode` and `discovery_evidence`: the desk is not a discovery
+    /// desk (no window in the grant, outside its limits, or no permit for it).
+    DeskNotDiscovery,
+    /// `approval_mode`: the grant's discovery window has ended.
+    DiscoveryWindowClosed,
+    /// `approval_mode`: the setting read back is not the one asked for.
+    ApprovalModeNotApplied,
 }
 
 /// The largest policy, as serialized JSON, a policy read sends; a larger one is left out and its digest still names
 /// it (contracts 0.75.0, `result.policy`).
 pub const POLICY_MAX_BYTES: usize = 65_536;
+
+/// The largest evidence document, as serialized JSON, a `discovery_evidence` answer sends.
+pub const EVIDENCE_MAX_BYTES: usize = 262_144;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Answer {
@@ -104,6 +114,16 @@ pub struct DeskFacts {
     pub providers_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<String>>,
+    /// `approval_mode` only: the mode the desk was read back in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<String>,
+    /// `approval_mode` to `auto` only: when its permit ends (UTC, `Z`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permit_expires_at: Option<String>,
+    /// `discovery_evidence` only: the evidence document, at most
+    /// [`EVIDENCE_MAX_BYTES`] as JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<serde_json::Value>,
 }
 
 impl Answer {

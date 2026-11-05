@@ -32,8 +32,10 @@ mod gateway;
 mod health;
 mod normalize;
 mod ops;
+mod permits;
 mod providers;
 mod recover;
+mod redact;
 mod routes;
 mod server;
 mod signin;
@@ -180,6 +182,9 @@ async fn run(path: PathBuf) -> Result<(), String> {
         // A change's answer is written here before its claim is released.
         records: driver::Records::Store(store.clone()),
         settle_for: driver::settle_window(Duration::from_secs(c.deadline_seconds)),
+        // The discovery permits: an unsafe folder stops the adapter.
+        permits: std::sync::Arc::new(permits::Permits::open(&c.state_dir, uid)?),
+        evidence: driver::discovery::EvidenceTimings::default(),
     });
     let verifier = std::sync::Arc::new(token::Verifier::new(c, Box::new(chrono::Utc::now))?);
     // Recovery of a change still running, and its settle markers.

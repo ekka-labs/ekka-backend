@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.ekka.ai/backend/discovery-permit.v1.schema.json",
+  "title": "DiscoveryPermit",
+  "description": "The permit that lets ONE discovery desk's network proposals be approved automatically. Written by the backend adapter only after it set the desk's proposal approval mode to `auto` and read it back as applied, at `<state_dir>/permits/<sandbox_id>.json`, atomically (a temporary file, then a rename), mode 0640. The gateway's interceptor reads it on every proposal from that sandbox and allows the proposal only while the permit is present, parses as this schema, names that sandbox id and has not expired; anything else is refused as if there were no permit. The adapter deletes it BEFORE it sets the mode back to `manual`, and when it deletes the desk. CLOSED: an unknown key is refused.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "workspace",
+    "sandbox_id",
+    "desk",
+    "expires_at",
+    "operation_id"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ekka.backend.discovery_permit/v1"
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "The backend workspace the desk lives in, as the adapter's configuration names it. The interceptor refuses a permit for another workspace."
+    },
+    "sandbox_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "The backend's immutable id for the desk's sandbox, a lowercase hyphenated UUID, the same id the file is named by. A desk deleted and created again under the same name has a new id, so an old permit never reaches it. The id admits no '/' and no '.', so the file name can never leave the folder."
+    },
+    "desk": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$",
+      "description": "The desk's name, the same rule as a route's `{name}`. Recorded for an operator; the interceptor matches by `sandbox_id`."
+    },
+    "expires_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "description": "When the permit stops allowing anything, UTC: the earlier of the discovery window's end and 60 minutes after it was written."
+    },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[a-zA-Z][a-zA-Z0-9_-]{0,63}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "`<run id>/<step id>/<task id>`: the `X-EKKA-Operation-Id` of the `approval_mode` call that wrote the permit, so the permit names the run that asked for it."
+    }
+  }
+}
