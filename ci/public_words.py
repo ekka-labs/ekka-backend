@@ -77,6 +77,9 @@ TRAILER = r"(?i)^co-authored-by:"
 # The one trailer that adds no name: the project's own identity, which GitHub writes itself when a maintainer
 # squash-merges a commit EKKA authored. Dropped from a commit message before it is read; every other trailer fails.
 OWN_TRAILER = re.compile(r"(?i)^co-authored-by:\s*EKKA <328120463\+ekka-ops\[bot\]@users\.noreply\.github\.com>\s*$")
+# In a commit message the line rule above decides about a co-author line; a sentence that only names the rule is not
+# one, so the word rule for it is left to the files.
+A_COMMITS = [p for p in A if p != r"(?i)\bco-authored-by\b"]
 B = [r"(?i)\bsandbox(es)?\b", r"(?i)\bgateways?\b", r"(?i)\bopenshell\b"]
 B_ALLOWED = re.compile(r"NVIDIA OpenShell's gateway|NVIDIA OpenShell|\(OpenShell\)")
 C = [
@@ -164,7 +167,7 @@ def commits(root, private):
     for entry in log.split("\x00")[1:]:
         sha, _, body = entry.partition("\n")
         lines = [line for line in body.split("\n") if not OWN_TRAILER.match(line)]
-        scan(lines, A + [TRAILER], f"commit {sha}", hits)
+        scan(lines, A_COMMITS + [TRAILER], f"commit {sha}", hits)
         scan(lines, private, f"commit {sha}", hits, show=False)
     for h in hits:
         print(f"public-words: {h}")
