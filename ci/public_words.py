@@ -74,6 +74,9 @@ BYTECODE = re.compile(r"(^|/)__pycache__/|\.py[co]$")
 # The binary files this repository means to publish. None today: a new one is added here on purpose, in review.
 BINARIES = frozenset()
 TRAILER = r"(?i)^co-authored-by:"
+# The one trailer that adds no name: the project's own identity, which GitHub writes itself when a maintainer
+# squash-merges a commit EKKA authored. Dropped from a commit message before it is read; every other trailer fails.
+OWN_TRAILER = re.compile(r"(?i)^co-authored-by:\s*EKKA <328120463\+ekka-ops\[bot\]@users\.noreply\.github\.com>\s*$")
 B = [r"(?i)\bsandbox(es)?\b", r"(?i)\bgateways?\b", r"(?i)\bopenshell\b"]
 B_ALLOWED = re.compile(r"NVIDIA OpenShell's gateway|NVIDIA OpenShell|\(OpenShell\)")
 C = [
@@ -160,7 +163,7 @@ def commits(root, private):
     hits = []
     for entry in log.split("\x00")[1:]:
         sha, _, body = entry.partition("\n")
-        lines = body.split("\n")
+        lines = [line for line in body.split("\n") if not OWN_TRAILER.match(line)]
         scan(lines, A + [TRAILER], f"commit {sha}", hits)
         scan(lines, private, f"commit {sha}", hits, show=False)
     for h in hits:

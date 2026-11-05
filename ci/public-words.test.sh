@@ -130,6 +130,8 @@ commit() {  # commit <want rc> <private words or ""> <name> <message>
 }
 commit 0 "" "a plain commit message passes" $'Verify the gate token before any call\n\nThe token is checked first.'
 commit 1 "" "a co-author trailer fails" $'Verify the gate token\n\nCo-Authored-By: Someone <someone@example.com>'
+commit 0 "" "the project's own identity as co-author passes (a squash merge writes it)" $'Verify the gate token\n\nCo-authored-by: EKKA <328120463+ekka-ops[bot]@users.noreply.github.com>'
+commit 1 "" "another identity under the project's name fails" $'Verify the gate token\n\nCo-authored-by: EKKA <someone@example.com>' 
 commit 1 "" "a private repo link in a commit fails" $'Verify the gate token\n\nRefs ekka-ai/x#1'
 commit 1 "Acmecorp" "a private name in a commit fails" $'Verify the gate token for Acmecorp'
 
