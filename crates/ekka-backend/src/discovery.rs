@@ -24,6 +24,10 @@
 //! A change still running is recovered toward `manual` only: recovery never
 //! writes a permit, and never sends `auto`.
 //!
+//! Neither mode re-pins the desk at the Enclave: its claim is released with
+//! no read-back ([`Backend::conclude_unpinned`]), so a desk whose policy was
+//! widened by automatic approvals stays refused for work until it is deleted.
+//!
 //! `discovery_evidence` is read only for a desk with a permit. It waits for
 //! the desk's proposals and loaded policy to stop changing, then answers the
 //! policy, the proposals, the decisions and the network log lines.
@@ -37,7 +41,7 @@ use serde_json::{json, Value};
 
 use super::{is_uuid, refused, Backend, Notes, DESK_LABEL};
 use crate::answer::{Answer, Code, DeskFacts, EVIDENCE_MAX_BYTES};
-use crate::claims::{Outcome, ReadBack};
+use crate::claims::Outcome;
 use crate::enforce;
 use crate::gateway::GatewayError;
 use crate::normalize::{message_digest, message_json, POLICY};
@@ -218,18 +222,25 @@ impl Backend {
                 .await;
         }
         tracing::info!(desk = %name, sandbox_id = %id, expires_at = %permit.expires_at, "discoveryPermitWritten");
-        let rb = ReadBack::Live {
-            sandbox_id: id,
-            policy_digest: facts.policy_digest.clone().unwrap_or_default(),
-            providers_digest: None,
-        };
         let answer = Answer::ready(DeskFacts {
             approval_mode: Some(AUTO.to_string()),
             permit_expires_at: Some(permit.expires_at),
             ..facts
         });
-        self.conclude(a, name, Outcome::Ready, Some(&rb), answer)
-            .await
+        self.conclude_unpinned(a, name, answer).await
+    }
+
+    /// CONCLUDE an approval change WITHOUT RE-PINNING the desk. A `ready`
+    /// release on a pinned desk must carry a live read-back, and the Enclave
+    /// files a re-pin to it (`desk-claim.v1` `read_back_live`): after a
+    /// discovery run the live policy is the one widened by automatic
+    /// approvals, and pinning it would let work run on that wall. So the
+    /// claim is released `refused` with no read-back: the Enclave frees the
+    /// desk and keeps its pins, which still name the policy from before
+    /// `auto`, and refuses work on the desk until it is deleted. The answer
+    /// to the caller stays what was read back.
+    async fn conclude_unpinned(&self, a: &Admitted, name: &str, answer: Answer) -> Answer {
+        self.conclude(a, name, Outcome::Refused, None, answer).await
     }
 
     /// `auto` was sent but no permit is written: the desk goes back to
@@ -328,17 +339,11 @@ impl Backend {
         }
         match self.facts(bearer, name).await {
             Ok(Some((_, f))) if f.backend_id.is_some() && f.policy_digest.is_some() => {
-                let rb = ReadBack::Live {
-                    sandbox_id: f.backend_id.clone().unwrap_or_default(),
-                    policy_digest: f.policy_digest.clone().unwrap_or_default(),
-                    providers_digest: None,
-                };
                 let answer = Answer::ready(DeskFacts {
                     approval_mode: Some(MANUAL.to_string()),
                     ..f
                 });
-                self.conclude(a, name, Outcome::Ready, Some(&rb), answer)
-                    .await
+                self.conclude_unpinned(a, name, answer).await
             }
             // Set, but the desk cannot be read back now: it stays running,
             // and recovery reads it back.

@@ -36,6 +36,9 @@ pub struct Enclave {
     /// Each release takes the first of these, if any, and is refused with it
     /// (`CODE: why`), changing nothing.
     pub release_refusals: Vec<String>,
+    /// Every re-pin the Enclave would file: `(desk, read_back)` for each
+    /// `ready` release that carries a live read-back.
+    pub repins: Vec<(String, Value)>,
 }
 
 impl Enclave {
@@ -91,6 +94,12 @@ fn answer(st: &Shared, req: &Value) -> Value {
             }
             if p["outcome"] != "unknown" {
                 s.held.remove(&desk);
+            }
+            if p["outcome"] == "ready"
+                && p["read_back"].is_object()
+                && p["read_back"]["deleted"].is_null()
+            {
+                s.repins.push((desk.clone(), p["read_back"].clone()));
             }
             json!({ "released": "freed" })
         }

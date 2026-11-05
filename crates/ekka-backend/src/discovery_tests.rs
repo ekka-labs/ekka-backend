@@ -68,7 +68,12 @@ async fn desk_world(name: &str) -> World {
         .await;
     assert_eq!(made.outcome, Outcome::Ready, "{made:?}");
     w.gw.lock().unwrap().calls.clear();
-    w.enc.lock().unwrap().seen.clear();
+    // The create filed the desk's first pin; only what comes after counts.
+    let mut enc = w.enc.lock().unwrap();
+    assert_eq!(enc.repins.len(), 1);
+    enc.repins.clear();
+    enc.seen.clear();
+    drop(enc);
     w
 }
 
@@ -142,8 +147,12 @@ async fn auto_is_read_back_before_its_permit_is_written() {
     let calls = w.enc.lock().unwrap().calls();
     assert_eq!(calls[0].0, "runner_desk_claim");
     assert_eq!(calls[1].0, "runner_desk_release");
-    assert_eq!(calls[1].1["outcome"], "ready");
-    assert_eq!(calls[1].1["read_back"]["sandbox_id"], FIRST_ID);
+    // Released with no read-back: the desk's pins stay as they were.
+    assert_eq!(
+        calls[1].1,
+        json!({ "desk": DESK, "operation_id": "00000000-0000-5000-8000-000000000001", "outcome": "refused" })
+    );
+    assert!(w.enc.lock().unwrap().repins.is_empty());
 }
 
 /// A window that ends before the 60 minutes: the permit ends with it.
@@ -647,4 +656,72 @@ fn the_contracts_sample_answers_are_this_answer_shape() {
         let a: Answer = serde_json::from_value(raw.clone()).unwrap();
         assert_eq!(serde_json::to_value(&a).unwrap(), raw, "{sample}");
     }
+}
+
+/// TURNING AUTO OFF NEVER BLESSES THE WIDENED WALL. A discovery run widened
+/// the desk's live policy (an automatic approval merged a rule); `manual`,
+/// and a recovered change toward it, release the claim with no read-back, so
+/// the Enclave files no re-pin and its pins still name the policy from
+/// before `auto`: work stays refused on the desk until it is deleted.
+#[tokio::test]
+async fn manual_never_re_pins_the_desk_to_its_widened_policy() {
+    let w = desk_world(DESK).await;
+    assert_eq!(auto_on(&w, 1).await.outcome, Outcome::Ready);
+    let mut widened = crate::driver::tests::policy();
+    widened["networkPolicies"]["npm"] = json!({
+        "name": "npm",
+        "endpoints": [{ "host": "registry.npmjs.org", "port": 443, "enforcement": "NETWORK_ENFORCEMENT_MODE_ENFORCE" }],
+        "binaries": [{ "path": "/usr/bin/node" }]
+    });
+    let widened_digest = crate::digest_cmd::policy_digest(&widened).unwrap();
+    w.gw.lock()
+        .unwrap()
+        .revisions
+        .get_mut(DESK)
+        .unwrap()
+        .push(crate::normalize::message(crate::normalize::POLICY, &widened).unwrap());
+    let a =
+        w.b.approval_mode(&as_op(&grant(), 2), DESK, &mode("manual"), &Noted)
+            .await;
+    assert_eq!(a.outcome, Outcome::Ready, "{a:?}");
+    // The answer says what the desk is: its widened policy.
+    assert_eq!(
+        a.desk.policy_digest.as_deref(),
+        Some(widened_digest.as_str())
+    );
+    // The release files no re-pin, to the widened policy or any other.
+    {
+        let enc = w.enc.lock().unwrap();
+        assert!(enc.repins.is_empty(), "{:?}", enc.repins);
+        let release = enc.calls().last().unwrap().clone();
+        assert_eq!(release.0, "runner_desk_release");
+        assert_eq!(release.1["outcome"], "refused");
+        assert!(release.1.get("read_back").is_none(), "{release:?}");
+        assert!(enc.held.is_empty(), "the desk is free to be deleted");
+    }
+    // Recovery toward manual: the same.
+    w.gw.lock()
+        .unwrap()
+        .settings
+        .get_mut(DESK)
+        .unwrap()
+        .insert("proposal_approval_mode".into(), "auto".into());
+    w.enc
+        .lock()
+        .unwrap()
+        .held
+        .insert(DESK.into(), crate::driver::tests::RID.into());
+    let r =
+        w.b.reissue(
+            &Verified::for_tests(Some(grant())).admit().unwrap(),
+            &Noted,
+            crate::routes::Operation::ApprovalMode,
+            DESK,
+            None,
+            br#"{"mode":"manual"}"#,
+            None,
+        )
+        .await;
+    assert_eq!(r.outcome, Outcome::Ready, "{r:?}");
+    assert!(w.enc.lock().unwrap().repins.is_empty());
 }
