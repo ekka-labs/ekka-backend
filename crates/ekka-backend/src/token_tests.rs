@@ -387,7 +387,11 @@ fn a_read_token_reads_and_only_reads() {
     t["scope"]["op"] = json!("read");
     t["constraints"] = json!({});
     let h = header(&t, "govern-gate-token-v1", &k);
-    for op in [Operation::Status, Operation::PolicyGet] {
+    for op in [
+        Operation::Status,
+        Operation::PolicyGet,
+        Operation::DiscoveryEvidence,
+    ] {
         verifier(&[("govern-gate-token-v1", &k)], NOW)
             .verify(&call(op, &h, &id, b""))
             .unwrap();
@@ -397,6 +401,7 @@ fn a_read_token_reads_and_only_reads() {
         Operation::Delete,
         Operation::PolicySet,
         Operation::ProviderDetach,
+        Operation::ApprovalMode,
     ] {
         assert_eq!(
             verifier(&[("govern-gate-token-v1", &k)], NOW)

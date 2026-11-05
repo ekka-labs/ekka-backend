@@ -150,8 +150,21 @@ fn the_mirror_is_the_vendored_schema() {
         "repo_hosts",
         "requires_role",
     ];
-    assert_eq!(keys(&s["properties"]), top);
-    assert_eq!(req(&s), top, "every top-level field is required");
+    let mut all: Vec<&str> = top.to_vec();
+    all.push("discovery");
+    all.sort_unstable();
+    assert_eq!(keys(&s["properties"]), all);
+    assert_eq!(
+        req(&s),
+        top,
+        "every top-level field but `discovery` is required"
+    );
+    // Contracts 0.76.0: the optional discovery window, closed.
+    let d = &s["properties"]["discovery"];
+    let disc = ["expires_at", "image_digests", "name_prefix", "providers"];
+    assert_eq!(keys(&d["properties"]), disc);
+    assert_eq!(req(d), disc);
+    assert_eq!(d["additionalProperties"], false);
     assert_eq!(s["additionalProperties"], false);
     let b = &s["properties"]["policy_baseline"];
     assert_eq!(keys(&b["properties"]), ["must_equal", "network"]);
@@ -186,6 +199,14 @@ fn the_mirror_is_the_vendored_schema() {
     assert_eq!(lim(&n["properties"]["allowed_cidrs"]), (0, 64));
     assert_eq!(n["properties"]["provider_added"]["const"], "listed_only");
     assert_eq!(p["requires_role"]["const"], "admin");
+    let dp = &d["properties"];
+    assert_eq!(lim(&dp["image_digests"]), (1, 4));
+    assert_eq!(lim(&dp["providers"]), (0, 8));
+    assert_eq!(dp["name_prefix"]["const"], super::DISCOVERY_PREFIX);
+    assert_eq!(
+        dp["expires_at"]["pattern"],
+        "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    );
     let must: Vec<&str> = b["properties"]["must_equal"]["items"]["enum"]
         .as_array()
         .unwrap()
@@ -229,4 +250,69 @@ fn a_grant_holds_up_to_64_address_ranges() {
         .collect::<Vec<_>>());
     let err = check(&g).unwrap_err();
     assert!(err.contains("allowed_cidrs"), "{err}");
+}
+
+/// Contracts 0.76.0: the sample grant with a discovery window passes, and
+/// each planted window that breaks the schema is refused.
+#[test]
+fn a_discovery_window_is_held_to_the_schema() {
+    let ok = vendored("samples/desks.v1.discovery.json");
+    check(&ok).unwrap();
+    let d = |f: &dyn Fn(&mut Value)| {
+        let mut v = ok.clone();
+        f(&mut v["discovery"]);
+        v
+    };
+    let digest = |c: char| format!("sha256:{}", c.to_string().repeat(64));
+    let planted: Vec<(&str, Value)> = vec![
+        ("no image", d(&|w| w["image_digests"] = json!([]))),
+        (
+            "five images",
+            d(&|w| {
+                w["image_digests"] = json!(["a", "b", "c", "d", "e"]
+                    .iter()
+                    .map(|c| digest(c.chars().next().unwrap()))
+                    .collect::<Vec<_>>())
+            }),
+        ),
+        (
+            "an image by tag",
+            d(&|w| w["image_digests"] = json!(["ghcr.io/x:1"])),
+        ),
+        (
+            "nine providers",
+            d(&|w| w["providers"] = json!(["a", "b", "c", "d", "e", "f", "g", "h", "i"])),
+        ),
+        (
+            "a provider twice",
+            d(&|w| w["providers"] = json!(["github", "github"])),
+        ),
+        ("another prefix", d(&|w| w["name_prefix"] = json!("code-"))),
+        ("no prefix", d(&|w| w["name_prefix"] = json!(""))),
+        (
+            "an offset time",
+            d(&|w| w["expires_at"] = json!("2026-11-05T15:00:00+01:00")),
+        ),
+        (
+            "a time with no zone",
+            d(&|w| w["expires_at"] = json!("2026-11-05T15:00:00")),
+        ),
+        (
+            "a lowercase t",
+            d(&|w| w["expires_at"] = json!("2026-11-05t15:00:00Z")),
+        ),
+        ("an unknown key", d(&|w| w["max_minutes"] = json!(60))),
+        (
+            "a missing key",
+            d(&|w| {
+                w.as_object_mut().unwrap().remove("expires_at");
+            }),
+        ),
+    ];
+    for (why, v) in planted {
+        assert!(check(&v).is_err(), "{why}");
+    }
+    let mut frac = ok.clone();
+    frac["discovery"]["expires_at"] = json!("2026-11-05T15:00:00.123Z");
+    check(&frac).unwrap();
 }

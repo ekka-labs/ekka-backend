@@ -1,0 +1,9 @@
+{
+  "delivery": "first",
+  "outcome": "ready",
+  "desk_ready": true,
+  "backend_id": "7d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+  "resource_version": "3",
+  "approval_mode": "auto",
+  "permit_expires_at": "2026-11-05T15:00:00Z"
+}

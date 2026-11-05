@@ -110,6 +110,8 @@ pub(crate) async fn world() -> World {
         // No record: a driver test concludes with nothing to write first.
         records: super::Records::Unrecorded,
         settle_for: SETTLE_FOR,
+        permits: std::sync::Arc::new(crate::permits::Permits::open(dir.path(), uid()).unwrap()),
+        evidence: super::discovery::EvidenceTimings::default(),
     };
     World { b, gw, enc, dir }
 }

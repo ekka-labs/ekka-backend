@@ -1,0 +1,8 @@
+{
+  "schema": "ekka.backend.discovery_permit/v1",
+  "workspace": "default",
+  "sandbox_id": "7d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+  "desk": "discover-0b3d5f7a",
+  "expires_at": "2026-11-05T15:00:00Z",
+  "operation_id": "0b3d5f7a-1c2e-4a6b-8d9f-0e1a2b3c4d5e/auto_on/5c1e9a2b-7d3f-4e8a-9b0c-1d2e3f4a5b6c"
+}

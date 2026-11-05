@@ -11,12 +11,13 @@
 //! - the signed token names this organization, this Enclave's API gate,
 //!   `ekka.gate.api.v1` and `apis/desks`, is within its lifetime (±30 s, as
 //!   GATE_SPEC §7.4), and its verb covers the route (`write` covers every
-//!   route; `read` only `status` and `policy_get`);
+//!   route; `read` only the reads: `status`, `policy_get` and
+//!   `discovery_evidence`);
 //! - the operation id's run is the token's run;
 //! - the body's sha256 is the token's `constraints.body_sha256` (required on
-//!   every route but the two reads), so a changed body is refused;
+//!   every route but the reads), so a changed body is refused;
 //! - `constraints.grant` is the desk grant's closed limits (desks.v1),
-//!   required on every route but the two reads;
+//!   required on every route but the reads;
 //! - its `token_id` has not been used: checked when the call is ADMITTED, not
 //!   when it is verified.
 //!   A verified call is first looked up by its operation in the durable
@@ -656,7 +657,9 @@ impl Verifier {
 /// The token covers exactly this call: its verb the route, its run the
 /// operation id's, its pin the body, its grant desks.v1.
 fn bind(t: &SignedToken, operation: Operation, run: &str, body: &[u8]) -> Result<(), Code> {
-    let read_route = matches!(operation, Operation::Status | Operation::PolicyGet);
+    // A read is every operation that changes nothing: `status`, `policy_get`
+    // and `discovery_evidence`.
+    let read_route = !operation.mutates();
     let covers = match t.op.as_str() {
         "write" => true,
         "read" => read_route,

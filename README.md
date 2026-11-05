@@ -60,11 +60,13 @@ Each line is enforced in this repository's code, named in brackets.
   exactly those, never `provider:write` or `openshell:all`. It never holds the
   desk backend's bootstrap administrator or the sign-in service's admin
   password.
-- **No way into a desk.** Its desk backend client has ten calls and no more:
-  five reads (a desk, its policy status, a provider, a provider profile, the
-  profile list) and five changes (create, delete, stop or start, set policy,
-  detach a provider). It has no call that runs a command in a desk, opens a
-  shell, or moves a file in or out (`gateway.rs`).
+- **No way into a desk.** Its desk backend client has fifteen calls and no
+  more: nine reads (a desk, its policy status, a provider, a provider profile,
+  the profile list, a desk's settings, its draft proposals, their decision
+  history, its log lines) and six changes (create, delete, stop or start, set
+  policy, detach a provider, set the one `proposal_approval_mode` setting). It
+  has no call that runs a command in a desk, opens a shell, approves a
+  proposal, or moves a file in or out (`gateway.rs`).
 - **One record per change, and nothing else on disk.** Each change is written
   to `<state_dir>/operations/<request id>.json` (mode 0600, in a folder only the
   adapter's user can open) before it reaches the desk backend. The record holds the
@@ -73,6 +75,12 @@ Each line is enforced in this repository's code, named in brackets.
   Never the credential, and never the desk backend token (`store.rs`). Beside the
   records, `<state_dir>/running/<request id>`, an empty file, names each change
   still running.
+- **One file it writes for the Enclave: a discovery permit.**
+  `<state_dir>/permits/<desk backend id>.json`
+  ([`discovery-permit.v1`](vendor/contracts/backend/discovery-permit.v1.schema.json)),
+  mode 0640 in a folder of the adapter's user that is closed to others and not
+  writable by its group, so the Enclave's interceptor can read it through the
+  group. It holds no secret (`permits.rs`).
 - **Two files it reads that the installer writes.** A settle marker,
   `<state_dir>/settle/<request id>.json`, and a settle hold,
   `<state_dir>/settle/<request id>.hold`, each owned by the adapter's user,
@@ -89,8 +97,8 @@ Each line is enforced in this repository's code, named in brackets.
 
 - **A read's token, after a restart.** Each gate token is used once. For a
   CHANGE, the record decides: a change whose record exists is answered from it,
-  never run again, even after a restart (`ops.rs`, `store.rs`). For the two
-  READS (`status`, `policy_get`), the adapter remembers used tokens in memory
+  never run again, even after a restart (`ops.rs`, `store.rs`). For the
+  READS (`status`, `policy_get`, `discovery_evidence`), the adapter remembers used tokens in memory
   only, until each one expires (`token.rs`). A restart forgets that list, so
   within its lifetime a read's token could be presented again after a restart. A
   read changes nothing, and only a caller running as the adapter's own user can
@@ -195,9 +203,14 @@ The release is OWED from the moment the answer is written: the record names it i
 | `provider_detach` | DetachSandboxProvider at `expected_resource_version`, then reads | the remaining `providers`; released with the new `providers_digest` |
 | `status` | GetSandbox, GetSandboxPolicyStatus, and each provider's record and profile | the desk's facts and `providers_digest` |
 | `policy_get` | GetSandbox, GetSandboxPolicyStatus | `policy_digest`, `resource_version`, and the loaded `policy` itself in the canonical form its digest is computed from (left out when its JSON is over 64 KiB; contracts 0.75.0) |
+| `approval_mode` `auto` | GetSandbox (the discovery checks, under the claim), UpdateConfig with only `proposal_approval_mode=auto`, GetSandboxConfig (the read-back), GetSandbox and GetSandboxPolicyStatus; then the permit is written | the desk's facts, `approval_mode: auto` and `permit_expires_at` (contracts 0.76.0) |
+| `approval_mode` `manual` | the permit is removed first; then GetSandbox, UpdateConfig with only `proposal_approval_mode=manual`, GetSandboxConfig | the desk's facts and `approval_mode: manual` |
+| `discovery_evidence` | GetSandbox; then GetDraftPolicy and GetSandboxPolicyStatus every 2 s until settled; then GetDraftPolicy, GetDraftHistory, GetSandboxLogs | `evidence`, at most 256 KiB (contracts 0.76.0) |
 
 - **A create** carries the label `ekka.ai/desk=true`, the label `ekka.ai/operation=<request id>`, and the annotation `ekka.ai/desk-providers` naming the providers it is made with. The Enclave's auto-registration reads that annotation as the desk's required providers. A person cannot rewrite it later, because people's own desk sign-ins only read. A create sends no command (the image's own) and no `repo`: a create that carries one is refused `FIELD_NOT_ALLOWED`, since nothing on a desk reads it (contracts 0.65.0).
 - **A detach** of a provider the desk's agent requires is refused `DESK_PROVIDER_REQUIRED` before the desk backend is called. The list comes from the Enclave's claim answer, never from a label or the request. An Enclave that names no list refuses every detach.
+- **Discovery.** `approval_mode` `auto` is allowed only inside the signed grant's `discovery` window (contracts 0.76.0), checked against the grant alone and the desk as the desk backend holds it: the window is named (else `DESK_NOT_DISCOVERY`) and has not ended (else `DISCOVERY_WINDOW_CLOSED`); the desk's name starts with `discover-`; it is an EKKA desk made from one of the window's images; every provider attached to it is one the window lists (else `DESK_NOT_DISCOVERY`). The permit is written only after GetSandboxConfig reads `auto` back, named by the desk's immutable backend id, and ends at the window's end or 60 minutes after it is written, whichever comes first. A read-back that is not `auto`, or a permit that cannot be written, sends `manual` back and is refused (`APPROVAL_MODE_NOT_APPLIED`). `manual` removes every permit for the desk before it asks the desk backend anything, and a delete removes it before the delete is sent. A change still `running` is recovered toward `manual` only, and recovery never writes a permit (`discovery.rs`).
+- **Discovery evidence** is read only for a desk with a permit (else `DESK_NOT_DISCOVERY`). It waits until the pending proposals and the loaded policy version have not changed for 20 s, reading every 2 s, and gives up with `settled: false` at 300 s or at the end of the call's own reads (`deadline_seconds` less its margin), whichever comes first. The network log is the last 2000 lines carrying `OCSF NET:` or `OCSF HTTP:`, each redacted (`redact.rs`: secret `key=value` values, a URL's user, password and query, the word after `Bearer`, and well-known token shapes) and cut to 400 characters; the oldest lines are left out first when the document would pass 256 KiB.
 - **A refusal** before the desk backend call releases the claim `refused`: nothing changed.
 - **A change whose reply is lost, or that the desk backend holds as `REQUEST_OUTCOME_UNCERTAIN`,** may still finish. It answers `running` (202, with its request id), and its claim is not released, so the desk stays held and no person can release it by hand.
 - **A change that completed but whose desk does not match** the request answers `unknown`.

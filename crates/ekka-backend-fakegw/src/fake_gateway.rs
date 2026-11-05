@@ -87,6 +87,22 @@ pub struct State {
     /// Faults planted around the handlers: a delayed or dropped reply, or an
     /// answer before any effect (`faults.rs`).
     pub faults: crate::faults::Faults,
+    /// Each sandbox's own settings, by name then key (`discovery.rs`).
+    pub settings: BTreeMap<String, BTreeMap<String, String>>,
+    /// A setting update answers OK and changes nothing: a gateway whose
+    /// read-back is not what it was asked.
+    pub ignore_settings: bool,
+    /// Each sandbox's draft policy chunks, by name.
+    pub drafts: BTreeMap<String, Vec<openshell_proto::openshell::v1::PolicyChunk>>,
+    /// Each sandbox's draft decision history, by name.
+    pub history: BTreeMap<String, Vec<openshell_proto::openshell::v1::DraftHistoryEntry>>,
+    /// Each sandbox's log lines, by name, oldest first.
+    pub logs: BTreeMap<String, Vec<openshell_proto::openshell::v1::SandboxLogLine>>,
+    /// The next this-many pending-draft reads each find one more proposal:
+    /// a desk still asking for hosts.
+    pub draft_churn: usize,
+    /// The `lines` every log read asked for.
+    pub log_reads: Vec<u32>,
 }
 
 pub type Shared = Arc<Mutex<State>>;
@@ -265,6 +281,26 @@ where
                 "/openshell.v1.OpenShell/DetachSandboxProvider" => {
                     Grpc::new(tonic_prost::ProstCodec::default())
                         .unary(Unary(st, crate::sandboxes::detach), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/GetSandboxConfig" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, crate::discovery::get_config), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/GetDraftPolicy" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, crate::discovery::get_drafts), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/GetDraftHistory" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, crate::discovery::get_history), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/GetSandboxLogs" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, crate::discovery::get_logs), req)
                         .await
                 }
                 "/openshell.v1.OpenShell/GetProvider" => {

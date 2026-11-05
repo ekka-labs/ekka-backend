@@ -1440,7 +1440,7 @@ fn the_contracts_settle_files_are_what_recovery_reads() {
 }
 
 /// Every refusal code the adapter can answer is one the contract names
-/// (0.67.0 adds NOT_APPLIED). The match below fails to compile when a code
+/// (0.67.0 adds NOT_APPLIED; 0.76.0 the three discovery codes). The match below fails to compile when a code
 /// is added without being listed here.
 #[test]
 fn every_answer_code_is_the_contracts() {
@@ -1474,7 +1474,10 @@ fn every_answer_code_is_the_contracts() {
             | VersionConflict
             | BackendUnavailable
             | BackendRefused
-            | NotApplied => {}
+            | NotApplied
+            | DeskNotDiscovery
+            | DiscoveryWindowClosed
+            | ApprovalModeNotApplied => {}
         }
     }
     let all = [
@@ -1506,6 +1509,9 @@ fn every_answer_code_is_the_contracts() {
         BackendUnavailable,
         BackendRefused,
         NotApplied,
+        DeskNotDiscovery,
+        DiscoveryWindowClosed,
+        ApprovalModeNotApplied,
     ];
     let schema = vendored("backend-v1.schema.json");
     let named: Vec<&str> = schema["$defs"]["code"]["enum"]

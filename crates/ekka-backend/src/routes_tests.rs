@@ -11,8 +11,10 @@ fn operations() -> Value {
 }
 
 /// THE ROUTES ARE THE CONTRACT'S. Every operation in the vendored
-/// operations.json is reached by its method and path, under its own name,
-/// and nothing else is: the adapter serves no route the contract lacks.
+/// operations.json is reached
+/// by its method and path, under its own name, and changes the desk exactly
+/// when the contract says it mutates; and nothing else is: the adapter
+/// serves no route the contract lacks.
 #[test]
 fn every_route_is_the_contracts_and_only_those() {
     let ops = operations();
@@ -28,6 +30,12 @@ fn every_route_is_the_contracts_and_only_those() {
         let method = o["method"].as_str().unwrap();
         let r = route(method, &path).unwrap();
         assert_eq!(r.operation.name(), o["operation"], "{method} {path}");
+        assert_eq!(
+            r.operation.mutates(),
+            o["mutates"].as_bool().unwrap(),
+            "{method} {path}"
+        );
+        assert_eq!(Operation::from_name(r.operation.name()), Some(r.operation));
         let reserved = o["reserved"].as_bool().unwrap();
         assert_eq!(
             reserved,
@@ -35,7 +43,7 @@ fn every_route_is_the_contracts_and_only_those() {
             "{method} {path}"
         );
     }
-    assert_eq!(list.len(), 9, "nine operations in v1");
+    assert_eq!(list.len(), 11, "eleven operations in v1");
 }
 
 #[test]

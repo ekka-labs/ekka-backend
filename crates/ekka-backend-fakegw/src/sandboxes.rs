@@ -104,7 +104,7 @@ fn fingerprint_bytes(type_name: &str, encoded: &[u8]) -> Vec<u8> {
 /// After the effect: the admission is kept, with its success unless the
 /// test lost the finalizer (then the reply is lost too); and the reply is
 /// lost when the test asked for it.
-fn reply<T: prost::Message>(
+pub(crate) fn reply<T: prost::Message>(
     s: &mut State,
     rpc: &str,
     request_id: &str,
@@ -128,7 +128,7 @@ fn reply<T: prost::Message>(
     Ok(Response::new(t))
 }
 
-fn record(s: &mut State, rpc: &str, ws: &str, name: &str, request_id: &str) {
+pub(crate) fn record(s: &mut State, rpc: &str, ws: &str, name: &str, request_id: &str) {
     s.calls.push(format!("{rpc} {ws}/{name}"));
     if let Some(w) = s.watch.clone() {
         let seen = std::fs::read_to_string(w).ok();
@@ -153,6 +153,7 @@ fn reap(s: &mut State) {
         s.vanishing.remove(&n);
         s.sandboxes.remove(&n);
         s.revisions.remove(&n);
+        s.settings.remove(&n);
     }
 }
 
@@ -277,6 +278,7 @@ pub fn delete(
             return Err(Status::not_found("no such sandbox"));
         };
         s.revisions.remove(&q.name);
+        s.settings.remove(&q.name);
         sb.metadata.map(|m| m.id).unwrap_or_default()
     };
     reply(
@@ -389,6 +391,11 @@ pub fn update_config(
     let Some(sb) = s.sandboxes.get_mut(&q.sandbox) else {
         return Err(Status::not_found("no such sandbox"));
     };
+    // One sandbox setting and no policy: the setting is kept, nothing else
+    // changes (`discovery.rs`).
+    if !q.setting_key.is_empty() && q.policy.is_none() {
+        return crate::discovery::update_setting(&mut s, &q, &rid, &payload);
+    }
     cas(sb, q.expected_resource_version)?;
     bump(sb);
     let policy: SandboxPolicy = q.policy.unwrap_or_default();
@@ -440,21 +447,30 @@ pub fn policy_status(
     let Some(revs) = s.revisions.get(&q.sandbox) else {
         return Err(Status::not_found("no such sandbox"));
     };
-    let version = u32::try_from(revs.len()).unwrap();
+    let newest = u32::try_from(revs.len()).unwrap();
     let active = if s.loading.contains(&q.sandbox) {
-        version - 1
+        newest - 1
     } else {
-        version
+        newest
+    };
+    // A version asked for by number (0: the newest).
+    let version = if q.version == 0 || q.version > newest {
+        newest
+    } else {
+        q.version
     };
     Ok(Response::new(GetSandboxPolicyStatusResponse {
         revision: Some(SandboxPolicyRevision {
             version,
-            status: if active == version {
+            status: if version <= active {
                 PolicyStatus::Loaded
             } else {
                 PolicyStatus::Pending
             } as i32,
-            policy: revs.last().cloned(),
+            policy: version
+                .checked_sub(1)
+                .and_then(|i| revs.get(i as usize))
+                .cloned(),
             ..Default::default()
         }),
         active_version: active,

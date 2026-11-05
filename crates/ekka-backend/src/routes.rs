@@ -13,16 +13,23 @@ pub enum Operation {
     PolicyGet,
     PolicySet,
     ProviderDetach,
+    /// Turn a discovery desk's proposal approval mode `auto` or `manual`.
+    ApprovalMode,
+    /// Read what a discovery desk proposed and reached, once it has settled.
+    DiscoveryEvidence,
     /// Reserved in v1: always refused `NOT_AVAILABLE`.
     ProviderConnect,
 }
 
 impl Operation {
-    /// A change to the desk: everything but the two reads. Only a change
+    /// A change to the desk: everything but the three reads. Only a change
     /// answers `running` when it outlasts the deadline.
     #[must_use]
     pub fn mutates(self) -> bool {
-        !matches!(self, Self::Status | Self::PolicyGet)
+        !matches!(
+            self,
+            Self::Status | Self::PolicyGet | Self::DiscoveryEvidence
+        )
     }
 
     /// The operation a contract name names, as [`Operation::name`] writes it.
@@ -37,6 +44,8 @@ impl Operation {
             Self::PolicyGet,
             Self::PolicySet,
             Self::ProviderDetach,
+            Self::ApprovalMode,
+            Self::DiscoveryEvidence,
             Self::ProviderConnect,
         ]
         .into_iter()
@@ -54,6 +63,8 @@ impl Operation {
             Self::PolicyGet => "policy_get",
             Self::PolicySet => "policy_set",
             Self::ProviderDetach => "provider_detach",
+            Self::ApprovalMode => "approval_mode",
+            Self::DiscoveryEvidence => "discovery_evidence",
             Self::ProviderConnect => "provider_connect",
         }
     }
@@ -121,6 +132,10 @@ pub fn route(method: &str, path: &str) -> Result<Route, Miss> {
         ("POST", ["", "v1", "desks", d, "start"]) => named(Operation::Start, d, None),
         ("GET", ["", "v1", "desks", d, "policy"]) => named(Operation::PolicyGet, d, None),
         ("PUT", ["", "v1", "desks", d, "policy"]) => named(Operation::PolicySet, d, None),
+        ("PUT", ["", "v1", "desks", d, "approval-mode"]) => named(Operation::ApprovalMode, d, None),
+        ("GET", ["", "v1", "desks", d, "discovery-evidence"]) => {
+            named(Operation::DiscoveryEvidence, d, None)
+        }
         ("DELETE", ["", "v1", "desks", d, "providers", p]) => {
             named(Operation::ProviderDetach, d, Some(p))
         }
