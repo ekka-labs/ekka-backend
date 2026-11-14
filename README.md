@@ -266,12 +266,14 @@ both bases pinned by digest in the `Dockerfile`. It has no shell. It builds for
 
 A version tag `vX.Y.Z` that equals `Cargo.toml`'s version runs
 `.github/workflows/release.yml`. It builds the image for `linux/amd64` and
-`linux/arm64`, each on a runner of that processor type, and pushes
-`ghcr.io/ekka-labs/ekka-backend:vX.Y.Z` as one multi-platform index. It signs
-the index and each platform image keyless with Sigstore, attaches an SPDX SBOM
-attestation to each platform image, and verifies all of them. If signing fails
-after the push, the image stays in the registry unsigned, and the checks below
-refuse it.
+`linux/arm64`, each on a runner of that processor type, and joins them into one
+multi-platform index. It signs the index and each platform image keyless with
+Sigstore, attaches an SPDX SBOM attestation to each platform image, and
+verifies all of them. Only then does it point
+`ghcr.io/ekka-labs/ekka-backend:vX.Y.Z` at that index. If the run stops before
+that, there is no version tag: the index exists only by its digest (and a
+`release-staging-*` tag no consumer uses), and the checks below refuse it if it
+is unsigned.
 
 Pin the index digest. Docker pulls the image for the machine's own processor
 type from it. To list the platform images in an index:

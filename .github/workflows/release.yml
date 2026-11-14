@@ -3,13 +3,21 @@ name: release
 # Publish the adapter image for a version tag (v1.2.3), for linux/amd64 and
 # linux/arm64. Each platform is built and smoke tested on a runner of its own
 # processor type (nothing is emulated) and pushed by digest. Then one job joins
-# the two into a multi-platform index under the tag, signs the index and each
-# platform image keyless, attaches each platform's SBOM attestation, and
-# verifies all of it with the exact identity an installer pins. An installer
-# pins the index digest; docker pulls the image for its own processor type.
-# Any error stops the run. If signing fails after the push, the image stays in
-# the registry unsigned, and an installer that verifies before it pulls
-# refuses it.
+# the two into a multi-platform index, names it by the digest the joining
+# command reports and by nothing else, checks it, signs the index and each
+# platform image keyless, attaches each platform's SBOM attestation, verifies
+# all of it with the exact identity an installer pins, and only then points the
+# version tag at that digest. An installer pins the index digest; docker pulls
+# the image for its own processor type. Any error stops the run.
+#
+# What a consumer sees if the run stops:
+#   - in a build job: platform images by digest, untagged; nothing is named.
+#   - after the join, before signing is verified: an unsigned index, tagged
+#     only release-staging-<run id>-<attempt> (no consumer uses it). No
+#     version tag. An installer that verifies before it pulls refuses it.
+#   - after verification, before the last step: a signed index, no version
+#     tag. Re-run the job.
+#   - after the last step: the release.
 #
 # Verify a release with:
 #   cosign verify \
@@ -150,23 +158,28 @@ jobs:
           path: in
           merge-multiple: true
 
-      - name: Join the two platforms into one index under the tag
+      - name: Join the two platforms into one index, named by its digest only
         id: index
         env:
           REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          TAG: ${{ github.ref_name }}
+          # A reference no consumer uses: the version tag is pointed at the index only after it is verified.
+          STAGING: release-staging-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           amd64="$(cat in/digest-amd64)"; arm64="$(cat in/digest-arm64)"
           for d in "$amd64" "$arm64"; do
             [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::not a digest: $d"; exit 1; }
           done
-          docker buildx imagetools create -t "$REPO:$TAG" "$REPO@$amd64" "$REPO@$arm64"
-          raw="$(docker buildx imagetools inspect "$REPO:$TAG" --raw)"
-          digest="$(docker buildx imagetools inspect "$REPO:$TAG" --format '{{json .Manifest}}' | jq -r .digest)"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for the index"; exit 1; }
+          docker buildx imagetools create --metadata-file created.json -t "$REPO:$STAGING" "$REPO@$amd64" "$REPO@$arm64"
+          # The digest the joining command reports. From here on the index is named by it alone: no step reads a tag
+          # to learn what to check, sign or publish.
+          digest="$(jq -r '."containerimage.descriptor".digest' created.json)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the join reported no digest"; exit 1; }
+          docker buildx imagetools inspect --raw "$REPO@$digest" > index.json
+          [[ "sha256:$(sha256sum < index.json | cut -c1-64)" == "$digest" ]] \
+            || { echo "::error::the registry answered other bytes for $digest"; exit 1; }
           # The index holds exactly the two images built above, each under its own platform.
-          got="$(printf '%s' "$raw" | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture) \(.digest)"' | sort)"
+          got="$(jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture) \(.digest)"' index.json | sort)"
           want="$(printf 'linux/amd64 %s\nlinux/arm64 %s\n' "$amd64" "$arm64" | sort)"
           [[ "$got" == "$want" ]] || { echo "::error::the index is not the two built images"; echo "$got"; exit 1; }
           { echo "index=$REPO@$digest"; echo "amd64=$REPO@$amd64"; echo "arm64=$REPO@$arm64"; } >> "$GITHUB_OUTPUT"
@@ -181,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           for ref in "$INDEX" "$AMD64" "$ARM64"; do
-            [[ "$ref" == *@sha256:* ]] || { echo "::error::no digest to sign"; exit 1; }
+            [[ "$ref" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest to sign: $ref"; exit 1; }
             cosign sign --yes "$ref"
           done
           cosign attest --yes --type spdxjson --predicate in/sbom-amd64.spdx.json "$AMD64"
@@ -193,6 +206,21 @@ jobs:
             cosign verify-attestation --type spdxjson \
               --certificate-identity-regexp "$IDENTITY" --certificate-oidc-issuer "$ISSUER" "$ref" > /dev/null
           done
+
+      - name: Last, point the version tag at the verified index
+        env:
+          REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          TAG: ${{ github.ref_name }}
+          INDEX: ${{ steps.index.outputs.index }}
+          AMD64: ${{ steps.index.outputs.amd64 }}
+          ARM64: ${{ steps.index.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          # One source that is an index is copied byte for byte: the tag names the same digest.
+          docker buildx imagetools create -t "$REPO:$TAG" "$INDEX"
+          now="sha256:$(docker buildx imagetools inspect --raw "$REPO:$TAG" | sha256sum | cut -c1-64)"
+          [[ "$REPO@$now" == "$INDEX" ]] || { echo "::error::$REPO:$TAG names $now, not the signed index $INDEX"; exit 1; }
           { echo "published, signed and verified (pin this one): $INDEX"
+            echo "  tag: $REPO:$TAG"
             echo "  linux/amd64: $AMD64"
             echo "  linux/arm64: $ARM64"; } | tee -a "$GITHUB_STEP_SUMMARY"
