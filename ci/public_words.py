@@ -28,7 +28,10 @@ an underscore are names, not words.
 Commit messages are public text too. With --commits, every commit message
 reachable from HEAD is checked against group A and the private names, and a
 Co-Authored-By trailer fails: the public history carries only the project's
-own identity.
+own identity. The one reference a message may carry is the one GitHub writes
+itself on a squash merge: " (#<number>)" once, at the very end of the first
+line. It is taken off that line before the line is read; anywhere else a
+number after # is a ticket number and fails.
 
 Names that must not appear here cannot be listed here either, since that would
 publish them: they come from the environment, one regular expression per line
@@ -64,7 +67,10 @@ A = [
     r"(?i)\bper the owner\b",
     r"\(owner,",
     r"(?i)\brule [0-9]+\b",
-    r"(^|[^&\w/])#[0-9]{2,}\b",
+    # A ticket number, any number of digits (an HTML entity such as &#38; is not one), and a reference into
+    # another repository (owner/repo#12).
+    r"(^|[^&\w/])#[0-9]+\b",
+    r"\b[\w.-]+/[\w.-]+#[0-9]+\b",
     r"(?i)\bported from\b",
     r"(?i)\bco-authored-by\b",
 ]
@@ -80,6 +86,8 @@ OWN_TRAILER = re.compile(r"(?i)^co-authored-by:\s*EKKA <328120463\+ekka-ops\[bot
 # In a commit message the line rule above decides about a co-author line; a sentence that only names the rule is not
 # one, so the word rule for it is left to the files.
 A_COMMITS = [p for p in A if p != r"(?i)\bco-authored-by\b"]
+# What GitHub appends to the first line of a squash-merged pull request: one space, (#<number>), end of line.
+SQUASH_SUFFIX = re.compile(r"(?<=\S) \(#[0-9]+\)$")
 B = [r"(?i)\bsandbox(es)?\b", r"(?i)\bgateways?\b", r"(?i)\bopenshell\b"]
 B_ALLOWED = re.compile(r"NVIDIA OpenShell's gateway|NVIDIA OpenShell|\(OpenShell\)")
 C = [
@@ -166,7 +174,9 @@ def commits(root, private):
     hits = []
     for entry in log.split("\x00")[1:]:
         sha, _, body = entry.partition("\n")
-        lines = [line for line in body.split("\n") if not OWN_TRAILER.match(line)]
+        lines = body.split("\n")
+        lines[0] = SQUASH_SUFFIX.sub("", lines[0], count=1)
+        lines = [line for line in lines if not OWN_TRAILER.match(line)]
         scan(lines, A_COMMITS + [TRAILER], f"commit {sha}", hits)
         scan(lines, private, f"commit {sha}", hits, show=False)
     for h in hits:
