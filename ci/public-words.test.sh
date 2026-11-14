@@ -39,6 +39,9 @@ expect "a plan id fails"                    1 "" "src/a.rs" "// plan ADK-D6"
 expect "a reviewer name fails"              1 "" "src/a.rs" "// MasterAgent said so"
 expect "a build agent name fails"           1 "" "src/a.rs" "// agent2 owns this"
 expect "a ticket number fails"              1 "" "src/a.rs" "// fixed in #1042"
+expect "a one-digit ticket number fails"    1 "" "src/a.rs" "// fixed in #5"
+expect "a reference into another repository fails" 1 "" "README.md" "Fixed upstream in someone/else#12."
+expect "an HTML entity is not a ticket"     0 "" "README.md" "Tom &#38; Jerry"
 expect "the owner as a person fails"        1 "" "src/a.rs" "// (owner, 2026-10-16)"
 expect "a porting note fails"               1 "" "src/a.rs" "// ported from somewhere"
 expect "a private name fails when given"    1 $'Acmecorp' "docs/x.md" "Acmecorp runs this."
@@ -136,6 +139,21 @@ commit 0 "" "a sentence naming the co-author rule passes" $'The check\n\nGitHub 
 commit 1 "" "a co-author line in the middle of a message still fails" $'Verify\n\nCo-authored-by: Someone <someone@example.com>\nMore text'
 commit 1 "" "a private repo link in a commit fails" $'Verify the gate token\n\nRefs ekka-ai/x#1'
 commit 1 "Acmecorp" "a private name in a commit fails" $'Verify the gate token for Acmecorp'
+# GitHub's squash merge ends the first line with " (#<number>)": that one suffix passes, nothing else does.
+commit 0 "" "a squash suffix with two digits passes" $'Verify the gate token (#11)\n\nThe token is checked first.'
+commit 0 "" "a squash suffix with one digit passes" $'Verify the gate token (#6)'
+commit 0 "" "a squash suffix with four digits passes" $'Verify the gate token (#1234)'
+commit 0 "" "a squash merge with the project's own co-author line passes" $'Verify the gate token (#11)\n\nCo-authored-by: EKKA <328120463+ekka-ops[bot]@users.noreply.github.com>'
+commit 1 "" "a ticket number mid-subject fails" $'Verify #12 before the gate token'
+commit 1 "" "a one-digit ticket number mid-subject fails" $'Fixes #5 in the gate token'
+commit 1 "" "a ticket number before the suffix fails" $'Verify the gate token for #12 (#11)'
+commit 1 "" "a second suffix fails" $'Verify the gate token (#12) (#11)'
+commit 1 "" "a suffix after two spaces fails" $'Verify the gate token  (#11)'
+commit 1 "" "a suffix alone as the subject fails" $'(#11)'
+commit 1 "" "a suffix on a body line fails" $'Verify the gate token\n\nThe token is checked first (#12)'
+commit 1 "" "a private repo link after a squash subject fails" $'Verify the gate token (#11)\n\nRefs ekka-ai/x#12'
+commit 1 "" "a reference into another repository fails" $'Verify the gate token\n\nRefs someone/else#12'
+commit 1 "" "a co-author line after a squash subject fails" $'Verify the gate token (#11)\n\nCo-authored-by: Someone <someone@example.com>'
 
 if [ "$fails" -gt 0 ]; then echo "public-words.test: $fails case(s) failed"; exit 1; fi
 echo "public-words.test: all cases passed"
