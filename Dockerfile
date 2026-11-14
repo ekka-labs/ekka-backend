@@ -4,7 +4,9 @@
 # bases are pinned by digest, so a rebuild of the same commit uses the same
 # bases; a base moves only by a reviewed change to this file.
 #
-# linux/amd64 only: the desk backend (NVIDIA OpenShell) runs on Linux x86_64.
+# linux/amd64 and linux/arm64. Each is built on a machine of its own processor
+# type, so nothing is cross-compiled: TARGETARCH (set by BuildKit) picks the
+# musl target, and any other value stops the build.
 
 # rust:1.92-bookworm, the toolchain rust-toolchain.toml pins.
 FROM rust:1.92-bookworm@sha256:e90e846de4124376164ddfbaab4b0774c7bdeef5e738866295e5a90a34a307a2 AS build
@@ -13,9 +15,16 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-RUN rustup target add x86_64-unknown-linux-musl \
- && cargo build --release --locked --target x86_64-unknown-linux-musl -p ekka-backend \
- && cp target/x86_64-unknown-linux-musl/release/ekka-backend /ekka-backend
+ARG TARGETARCH
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) target=x86_64-unknown-linux-musl ;; \
+      arm64) target=aarch64-unknown-linux-musl ;; \
+      *) echo "no build for processor type '$TARGETARCH': amd64 and arm64 only" >&2; exit 1 ;; \
+    esac; \
+    rustup target add "$target"; \
+    cargo build --release --locked --target "$target" -p ekka-backend; \
+    cp "target/$target/release/ekka-backend" /ekka-backend
 
 # gcr.io/distroless/static-debian12:nonroot: no shell, no package manager,
 # runs as uid 65532.

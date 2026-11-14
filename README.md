@@ -253,20 +253,32 @@ While one stays unresolved, the desk is held. A `status` answers `running` with 
 
 ```bash
 cargo test --workspace
-docker build --platform linux/amd64 -t ekka-backend .
+docker build -t ekka-backend .
 docker run --rm ekka-backend --version
 ```
 
 The image is a static musl build on `gcr.io/distroless/static-debian12:nonroot`,
-both bases pinned by digest in the `Dockerfile`. It has no shell.
+both bases pinned by digest in the `Dockerfile`. It has no shell. It builds for
+`linux/amd64` and `linux/arm64`, each on a machine of that processor type; the
+`Dockerfile` refuses any other.
 
 ## Release
 
 A version tag `vX.Y.Z` that equals `Cargo.toml`'s version runs
-`.github/workflows/release.yml`. It pushes `ghcr.io/ekka-labs/ekka-backend:vX.Y.Z`,
-signs the digest keyless with Sigstore, attaches an SPDX SBOM attestation, and
-verifies both. If signing fails after the push, the image stays in the
-registry unsigned, and the checks below refuse it.
+`.github/workflows/release.yml`. It builds the image for `linux/amd64` and
+`linux/arm64`, each on a runner of that processor type, and pushes
+`ghcr.io/ekka-labs/ekka-backend:vX.Y.Z` as one multi-platform index. It signs
+the index and each platform image keyless with Sigstore, attaches an SPDX SBOM
+attestation to each platform image, and verifies all of them. If signing fails
+after the push, the image stays in the registry unsigned, and the checks below
+refuse it.
+
+Pin the index digest. Docker pulls the image for the machine's own processor
+type from it. To list the platform images in an index:
+
+```bash
+docker buildx imagetools inspect ghcr.io/ekka-labs/ekka-backend@sha256:<index digest>
+```
 
 ## How to verify a release
 
@@ -284,7 +296,8 @@ moved, a digest cannot. Before you run an image, check all three:
 
    A signature from any other workflow, branch or repository fails this check.
 
-2. **Its SBOM is attested by the same workflow.**
+2. **Its SBOM is attested by the same workflow.** The SBOM is attested on each
+   platform image, so use a platform image's digest from the index here.
 
    ```bash
    cosign verify-attestation --type spdxjson \
