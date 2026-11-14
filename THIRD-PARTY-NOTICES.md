@@ -3019,7 +3019,7 @@ Applies to:
   * regex 1.13.1 (https://github.com/rust-lang/regex)
   * ring 0.17.14 (https://github.com/briansmith/ring)
   * rustc_version 0.4.1 (https://github.com/djc/rustc-version-rs)
-  * rustix 1.1.5 (https://github.com/bytecodealliance/rustix)
+  * rustix 1.1.6 (https://github.com/bytecodealliance/rustix)
   * rustls 0.23.46 (https://github.com/rustls/rustls)
   * signal-hook-registry 1.4.8 (https://github.com/vorner/signal-hook)
   * smallvec 1.16.3 (https://github.com/servo/rust-smallvec)
