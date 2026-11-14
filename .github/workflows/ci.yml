@@ -79,7 +79,16 @@ jobs:
       - run: git diff --exit-code -- THIRD-PARTY-NOTICES.md
 
   image:
-    runs-on: ubuntu-latest
+    # Each platform the release publishes, built and checked on a runner of its
+    # own processor type, the same way the release does it.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, arch: amd64, os: ubuntu-24.04 }
+          - { platform: linux/arm64, arch: arm64, os: ubuntu-24.04-arm }
+    name: image (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
     services:
       registry:
         image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
@@ -91,20 +100,32 @@ jobs:
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
         with:
           cosign-release: 'v2.4.1'
-      - name: Build and push to the job's own registry
-        id: build
+      - name: This runner is the platform it builds
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          docker build --platform linux/amd64 -t "$IMAGE:ci" .
+          [[ "$(docker version --format '{{.Server.Arch}}')" == "$ARCH" ]] \
+            || { echo "::error::runner is $(docker version --format '{{.Server.Arch}}'), not $ARCH"; exit 1; }
+      - name: Build and push to the job's own registry
+        id: build
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          docker build --platform "$PLATFORM" -t "$IMAGE:ci" .
           docker push "$IMAGE:ci"
           digest="$(docker buildx imagetools inspect "$IMAGE:ci" --format '{{json .Manifest}}' | jq -r .digest)"
           [[ "$digest" == sha256:* ]] || { echo "::error::no digest for $IMAGE:ci"; exit 1; }
           echo "ref=$IMAGE@$digest" >> "$GITHUB_OUTPUT"
-      - name: The image answers --version with the version and the contract
+      - name: The image is this platform and answers --version with the version and the contract
         env:
           REF: ${{ steps.build.outputs.ref }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
+          os_arch="$(docker image inspect "$(docker pull -q "$REF")" --format '{{.Os}}/{{.Architecture}}')"
+          [[ "$os_arch" == "$PLATFORM" ]] || { echo "::error::image is $os_arch, not $PLATFORM"; exit 1; }
           out="$(docker run --rm "$REF" --version)"
           echo "$out"
           version="$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
