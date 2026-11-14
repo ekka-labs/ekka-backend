@@ -497,6 +497,33 @@ impl Harness {
         String::from_utf8_lossy(&self.output.lock().unwrap()).to_string()
     }
 
+    /// How many calls the adapter has logged as answered so far.
+    fn answered(&self) -> usize {
+        answers_in(&self.logs())
+    }
+
+    /// The log, once it holds at least `n` answered lines. The adapter logs a
+    /// call's answer before it replies, but a reader thread copies its output
+    /// into the buffer, so a reply can arrive before its line does. A check
+    /// that reads the log right after a reply waits here first, and fails by
+    /// name if the line never comes.
+    #[track_caller]
+    fn logs_with_answers(&self, n: usize) -> String {
+        let started = Instant::now();
+        loop {
+            let logs = self.logs();
+            let have = answers_in(&logs);
+            if have >= n {
+                return logs;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the adapter's log holds {have} answered line(s) after 5 s, wanted {n}: {logs}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn call(&self, method: &str, path: &str, body: Option<&Value>, grant: Grant) -> Call {
         Call {
             method: method.to_string(),
@@ -627,11 +654,8 @@ impl Harness {
         let basic = fake_issuer::basic("ekka-desk-admin", SECRET);
         let basic = basic.trim_start_matches("Basic ");
         let planted = [SECRET, GW_TOKEN, basic];
-        let logs = self.logs();
-        assert!(
-            logs.contains("\"answered\"") || logs.contains("answered"),
-            "the adapter's log was captured: {logs}"
-        );
+        // At least one answer is in the captured log before it is searched.
+        let logs = self.logs_with_answers(1);
         for p in planted {
             for (i, line) in logs.lines().enumerate() {
                 assert!(!line.contains(p), "log line {i} shows a secret: {line}");
@@ -654,6 +678,12 @@ impl Harness {
             "the gateway got only the minted token: {seen:?}"
         );
     }
+}
+
+/// The answered lines in a captured log (the adapter's JSON log names each one
+/// "answered").
+fn answers_in(logs: &str) -> usize {
+    logs.lines().filter(|l| l.contains("\"answered\"")).count()
 }
 
 impl Drop for Harness {
@@ -1449,8 +1479,12 @@ async fn a_planted_credential_never_appears_in_a_log_line_a_response_or_a_file()
         Grant::write(&h.grant.clone()),
     );
     c.credential = "PLANTED-wrong-credential-3Lp0".into();
+    let before = h.answered();
     h.send(&c).await.assert_refused("BACKEND_REFUSED");
-    assert!(!h.logs().contains("PLANTED-wrong-credential-3Lp0"));
+    // This call's own answer is in the log before the log is searched for it.
+    assert!(!h
+        .logs_with_answers(before + 1)
+        .contains("PLANTED-wrong-credential-3Lp0"));
     h.gw.lock()
         .unwrap()
         .lose_reply
