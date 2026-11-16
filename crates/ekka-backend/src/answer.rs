@@ -69,6 +69,56 @@ pub enum Code {
     DiscoveryWindowClosed,
     /// `approval_mode`: the setting read back is not the one asked for.
     ApprovalModeNotApplied,
+    /// `grant_facts`: no baseline policy at the installation's path.
+    BaselinePolicyMissing,
+    /// `grant_facts`: the baseline policy could not be read, or is over 1 MiB.
+    BaselinePolicyUnreadable,
+    /// `grant_facts`: the baseline policy is not a `SandboxPolicy` this
+    /// release reads.
+    BaselinePolicyInvalid,
+    /// `grant_facts`: the provider list could not be read whole, or names a
+    /// provider badly or twice.
+    ProvidersUnreadable,
+    /// `grant_facts`: the gateway holds more than 64 providers.
+    ProvidersTooMany,
+}
+
+/// `grant_facts` only: what a desks grant's limits are built from (contracts
+/// 0.83.0). Digests and names only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantFacts {
+    pub baseline_policy_digest: String,
+    /// Sorted by name, each name once.
+    pub providers: Vec<ProviderFact>,
+}
+
+/// One provider: its name, and EITHER its digest OR why there is none. The
+/// type admits nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderFact {
+    pub name: String,
+    #[serde(flatten)]
+    pub fact: Fact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fact {
+    /// What a desks grant's `provider_config_digests` holds for this name.
+    Digest(String),
+    Code(FactCode),
+}
+
+/// Why a provider carries no digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FactCode {
+    /// The gateway holds the provider but not the profile it names.
+    ProviderProfileMissing,
+    /// Anything else: the gateway did not answer for it, or its digest could
+    /// not be computed.
+    ProviderUnreadable,
 }
 
 /// The largest policy, as serialized JSON, a policy read sends; a larger one is left out and its digest still names
@@ -124,6 +174,9 @@ pub struct DeskFacts {
     /// [`EVIDENCE_MAX_BYTES`] as JSON.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence: Option<serde_json::Value>,
+    /// `grant_facts` only. Says nothing about any desk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_facts: Option<GrantFacts>,
 }
 
 impl Answer {

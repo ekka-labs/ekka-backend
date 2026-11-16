@@ -110,8 +110,10 @@ pub async fn from_gateway(
     let bearer = tokens.bearer(secret).await.map_err(|e| e.to_string())?;
     let (p, profile) = match crate::providers::read(gw, &bearer, name).await {
         Ok(found) => found,
-        Err((e, why)) => {
-            if e == crate::gateway::GatewayError::Unauthenticated {
+        Err((miss, why)) => {
+            if miss
+                == crate::providers::Miss::Gateway(crate::gateway::GatewayError::Unauthenticated)
+            {
                 tokens.rejected();
             }
             return Err(why);
