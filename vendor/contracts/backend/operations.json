@@ -13,6 +13,7 @@
     {"operation": "provider_detach", "method": "DELETE", "path": "/v1/desks/{name}/providers/{provider}", "body": "provider_detach_body", "mutates": true, "reserved": false, "route_codes": ["DESK_PROVIDER_REQUIRED"]},
     {"operation": "approval_mode", "method": "PUT", "path": "/v1/desks/{name}/approval-mode", "body": "approval_mode_body", "mutates": true, "reserved": false, "route_codes": ["DESK_NOT_DISCOVERY", "DISCOVERY_WINDOW_CLOSED", "APPROVAL_MODE_NOT_APPLIED"]},
     {"operation": "discovery_evidence", "method": "GET", "path": "/v1/desks/{name}/discovery-evidence", "body": null, "mutates": false, "reserved": false, "route_codes": ["DESK_NOT_DISCOVERY"]},
+    {"operation": "grant_facts", "method": "GET", "path": "/v1/grant-facts", "body": null, "mutates": false, "reserved": false, "route_codes": ["BASELINE_POLICY_MISSING", "BASELINE_POLICY_UNREADABLE", "BASELINE_POLICY_INVALID", "PROVIDERS_UNREADABLE", "PROVIDERS_TOO_MANY"]},
     {"operation": "provider_connect", "method": "POST", "path": "/v1/providers", "body": null, "mutates": true, "reserved": true}
   ],
   "outcome_table": [

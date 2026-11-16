@@ -655,3 +655,11 @@ fn a_discovery_desk_reaches_the_public_internet_only_inside_the_grant() {
         "a port the grant does not name"
     );
 }
+
+/// The limits are read again before any change, never assumed: a FOLLOW
+/// form (contracts 0.77.0) is not desk limits and is refused.
+#[test]
+fn a_follow_form_is_not_desk_limits() {
+    let follow = json!({"follow": {"grant": "org_desks"}, "requires_role": "admin"});
+    assert_eq!(grant(Some(&follow)).unwrap_err(), Code::ConstraintsInvalid);
+}

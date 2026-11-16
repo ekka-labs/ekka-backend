@@ -173,6 +173,29 @@ fn each_planted_call_is_refused_with_its_code() {
             Operation::Stop,
             vec![],
         ),
+        // Contracts 0.77.0: a FOLLOW form names another grant and carries no
+        // limits. Govern resolves it before signing; a token carrying one is
+        // never read as a grant with nothing in it, on a change or a read.
+        (
+            "a FOLLOW form in place of a write's limits",
+            Code::ConstraintsInvalid,
+            with(&|t| {
+                t["constraints"]["grant"] =
+                    json!({"follow": {"grant": "org_desks"}, "requires_role": "admin"});
+            }),
+            Operation::Stop,
+            vec![],
+        ),
+        (
+            "a FOLLOW form in place of a read's limits",
+            Code::ConstraintsInvalid,
+            with(&|t| {
+                t["constraints"]["grant"] =
+                    json!({"follow": {"grant": "org_desks"}, "requires_role": "admin"});
+            }),
+            Operation::Status,
+            vec![],
+        ),
         // an API-gate token's constraints are CLOSED in the
         // published gate-token schema: `grant` and `body_sha256` only.
         (
@@ -312,6 +335,24 @@ fn a_stored_token_is_rechecked_at_its_admission_time_and_never_consumed() {
         .unwrap()
         .admit()
         .unwrap();
+}
+
+/// The recovery path refuses a FOLLOW form too: a stored token carrying one
+/// is never read as a grant with no limits.
+#[test]
+fn a_stored_token_with_a_follow_form_is_refused() {
+    let k = govern_test_key();
+    let mut t = token();
+    t["constraints"]["grant"] = json!({"follow": {"grant": "org_desks"}, "requires_role": "admin"});
+    let h = header(&t, "govern-gate-token-v1", &k);
+    let v = verifier(&[("govern-gate-token-v1", &k)], NOW);
+    for op in [Operation::Stop, Operation::Status] {
+        assert_eq!(
+            v.verify_stored(&h, op, &op_id(), b"", at(NOW)).unwrap_err(),
+            Code::ConstraintsInvalid,
+            "{op:?}"
+        );
+    }
 }
 
 /// Only the carried canonical bytes are verified and read: the inlined

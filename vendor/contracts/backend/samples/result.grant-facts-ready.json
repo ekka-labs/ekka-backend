@@ -1,0 +1,22 @@
+{
+  "delivery": "first",
+  "outcome": "ready",
+  "desk_ready": true,
+  "grant_facts": {
+    "baseline_policy_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "providers": [
+      {
+        "name": "github",
+        "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "name": "claude-code",
+        "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "name": "bitbucket",
+        "code": "PROVIDER_PROFILE_MISSING"
+      }
+    ]
+  }
+}

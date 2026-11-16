@@ -43,7 +43,7 @@ fn every_route_is_the_contracts_and_only_those() {
             "{method} {path}"
         );
     }
-    assert_eq!(list.len(), 11, "eleven operations in v1");
+    assert_eq!(list.len(), 12, "twelve operations in v1");
 }
 
 #[test]

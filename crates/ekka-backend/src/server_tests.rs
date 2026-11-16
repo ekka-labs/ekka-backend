@@ -144,6 +144,38 @@ async fn a_verified_call_reaches_its_operation_and_the_reserved_one_does_not() {
     assert_eq!(n.load(Ordering::SeqCst), 5, "provider_connect is reserved");
 }
 
+/// grant_facts is verified like every call: a signed read reaches its
+/// operation, and one with no token is refused before it.
+#[tokio::test]
+async fn the_grant_facts_read_is_verified_before_its_operation() {
+    let (h, n) = counting();
+    let (_d, p) = start(uid(), Duration::from_secs(5), h);
+    let without = |name: &str| -> Vec<(String, String)> {
+        signed(b"").into_iter().filter(|(k, _)| k != name).collect()
+    };
+    assert_eq!(
+        call(
+            &p,
+            "GET",
+            "/v1/grant-facts",
+            &without("x-ekka-gate-token"),
+            b""
+        )
+        .await,
+        Some((200, refused("TOKEN_MISSING")))
+    );
+    assert_eq!(n.load(Ordering::SeqCst), 0, "refused before its operation");
+    assert_eq!(
+        call(&p, "GET", "/v1/grant-facts", &signed(b""), b"").await,
+        Some((200, refused("NOT_AVAILABLE")))
+    );
+    assert_eq!(
+        n.load(Ordering::SeqCst),
+        1,
+        "a verified read reaches its operation"
+    );
+}
+
 /// Token checks, through the server: each refused call makes zero
 /// calls past verification.
 #[tokio::test]

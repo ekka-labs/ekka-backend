@@ -17,18 +17,21 @@ pub enum Operation {
     ApprovalMode,
     /// Read what a discovery desk proposed and reached, once it has settled.
     DiscoveryEvidence,
+    /// What a desks grant's limits are built from (contracts 0.83.0). Refused
+    /// `NOT_AVAILABLE` until the adapter computes them.
+    GrantFacts,
     /// Reserved in v1: always refused `NOT_AVAILABLE`.
     ProviderConnect,
 }
 
 impl Operation {
-    /// A change to the desk: everything but the three reads. Only a change
-    /// answers `running` when it outlasts the deadline.
+    /// A change: everything but the four reads. Only a change answers
+    /// `running` when it outlasts the deadline.
     #[must_use]
     pub fn mutates(self) -> bool {
         !matches!(
             self,
-            Self::Status | Self::PolicyGet | Self::DiscoveryEvidence
+            Self::Status | Self::PolicyGet | Self::DiscoveryEvidence | Self::GrantFacts
         )
     }
 
@@ -46,6 +49,7 @@ impl Operation {
             Self::ProviderDetach,
             Self::ApprovalMode,
             Self::DiscoveryEvidence,
+            Self::GrantFacts,
             Self::ProviderConnect,
         ]
         .into_iter()
@@ -65,6 +69,7 @@ impl Operation {
             Self::ProviderDetach => "provider_detach",
             Self::ApprovalMode => "approval_mode",
             Self::DiscoveryEvidence => "discovery_evidence",
+            Self::GrantFacts => "grant_facts",
             Self::ProviderConnect => "provider_connect",
         }
     }
@@ -123,6 +128,11 @@ pub fn route(method: &str, path: &str) -> Result<Route, Miss> {
         }),
         ("POST", ["", "v1", "providers"]) => Ok(Route {
             operation: Operation::ProviderConnect,
+            desk: None,
+            provider: None,
+        }),
+        ("GET", ["", "v1", "grant-facts"]) => Ok(Route {
+            operation: Operation::GrantFacts,
             desk: None,
             provider: None,
         }),
