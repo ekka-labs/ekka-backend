@@ -286,7 +286,9 @@ async fn dispatch(
             }
         }
         Operation::DiscoveryEvidence => b.discovery_evidence(a, desk).await,
-        // Reserved in v1: providers are set at install.
-        Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
+        // grant_facts: refused by name until the adapter computes the facts,
+        // never answered empty. provider_connect: reserved in v1, providers
+        // are set at install.
+        Operation::GrantFacts | Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
     }
 }

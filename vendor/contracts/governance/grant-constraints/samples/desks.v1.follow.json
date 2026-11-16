@@ -1,0 +1,6 @@
+{
+  "follow": {
+    "grant": "org_desks"
+  },
+  "requires_role": "admin"
+}

@@ -123,7 +123,15 @@ fn a_value_the_schema_refuses_is_refused_here() {
 /// that adds, removes or re-limits a field fails here, not at the adapter.
 #[test]
 fn the_mirror_is_the_vendored_schema() {
-    let s = vendored("desks.v1.schema.json");
+    let whole = vendored("desks.v1.schema.json");
+    // Contracts 0.77.0: one of two closed forms. A token carries only the FULL
+    // form: Govern resolves a FOLLOW form into its grant's limits before it
+    // signs (`a_follow_form_in_a_token_is_refused`). The mirror is the full one.
+    assert_eq!(
+        whole["oneOf"],
+        json!([{"$ref": "#/$defs/full"}, {"$ref": "#/$defs/follow"}])
+    );
+    let s = &whole["$defs"]["full"];
     let keys = |o: &Value| {
         let mut k: Vec<String> = o.as_object().unwrap().keys().cloned().collect();
         k.sort();
@@ -155,7 +163,7 @@ fn the_mirror_is_the_vendored_schema() {
     all.sort_unstable();
     assert_eq!(keys(&s["properties"]), all);
     assert_eq!(
-        req(&s),
+        req(s),
         top,
         "every top-level field but `discovery` is required"
     );
@@ -217,8 +225,11 @@ fn the_mirror_is_the_vendored_schema() {
 
     // The patterns the checks above restate, as the schema writes them.
     let label = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?";
-    assert_eq!(s["$defs"]["digest"]["pattern"], "^sha256:[0-9a-f]{64}$");
-    assert_eq!(s["$defs"]["name"]["pattern"], "^[a-z0-9][a-z0-9._-]{0,62}$");
+    assert_eq!(whole["$defs"]["digest"]["pattern"], "^sha256:[0-9a-f]{64}$");
+    assert_eq!(
+        whole["$defs"]["name"]["pattern"],
+        "^[a-z0-9][a-z0-9._-]{0,62}$"
+    );
     assert_eq!(
         p["allowed_hosts"]["items"]["pattern"],
         format!("^(\\*\\.)?{label}(\\.{label})+$")
@@ -315,4 +326,18 @@ fn a_discovery_window_is_held_to_the_schema() {
     let mut frac = ok.clone();
     frac["discovery"]["expires_at"] = json!("2026-11-05T15:00:00.123Z");
     check(&frac).unwrap();
+}
+
+/// A FOLLOW form names another grant and carries no limits; Govern resolves it
+/// before signing, so a token that carries one is refused, never read as a grant
+/// with nothing in it.
+#[test]
+fn a_follow_form_in_a_token_is_refused() {
+    let follow = vendored("samples/desks.v1.follow.json");
+    assert!(
+        follow.get("follow").is_some(),
+        "the vendored sample is a follow form"
+    );
+    let e = check(&follow).unwrap_err();
+    assert!(e.starts_with("not desk grant limits (desks.v1)"), "{e}");
 }

@@ -420,3 +420,25 @@ fn a_releasing_entry_for_a_record_still_running_is_kept_until_it_settles() {
     assert!(st.releasing().unwrap().is_empty());
     assert!(!entry.exists(), "cleared once released");
 }
+
+/// grant_facts, until the adapter computes the facts: an admitted read refused
+/// NOT_AVAILABLE by name, with no record written and no gateway call.
+#[tokio::test]
+async fn the_grant_facts_read_is_refused_by_name_and_touches_nothing() {
+    let w = world().await;
+    let s = store(&w);
+    let a = deliver(&w, &s, &route(Operation::GrantFacts, None), &Bytes::new()).await;
+    assert_eq!(
+        (a.outcome, a.code),
+        (Outcome::Refused, Some(Code::NotAvailable)),
+        "{a:?}"
+    );
+    assert!(!record_path(&w).exists(), "a read records nothing");
+    let gw = w.gw.lock().unwrap();
+    assert!(
+        gw.calls.is_empty(),
+        "no gateway call, read or write: {:?}",
+        gw.calls
+    );
+    assert!(gw.request_ids.is_empty(), "no gateway change");
+}
