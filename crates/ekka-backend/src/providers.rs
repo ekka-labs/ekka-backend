@@ -26,6 +26,19 @@ use openshell_proto::openshell::v1::ProviderProfile;
 use crate::digest::json_digest;
 use crate::normalize::{message, message_json, PROVIDER_PROFILE};
 
+/// Why one provider, or the profile the gateway applies to it, was not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Miss {
+    /// The gateway holds no provider by that name.
+    Provider,
+    /// The gateway holds the provider but not the profile it names.
+    Profile,
+    /// More than one profile could be the one the gateway applies.
+    Ambiguous,
+    /// The gateway did not answer.
+    Gateway(crate::gateway::GatewayError),
+}
+
 /// What OpenShell answers in place of every credential value.
 pub const REDACTED: &str = "REDACTED";
 /// The provider record's type name in the vendored proto.
@@ -55,7 +68,8 @@ fn without_volatile(mut v: Value) -> Value {
     v
 }
 
-/// One provider's entry, exactly as the runner's `digest_of` builds it.
+/// One provider's entry, as the contract defines a provider digest's input:
+/// the same entry every reader builds.
 ///
 /// # Errors
 /// `PROVIDER_CREDENTIAL_NOT_REDACTED` naming the key, or
@@ -88,8 +102,8 @@ fn entry(name: &str, p: &Provider, profile: &ProviderProfile) -> Result<Value, S
     }))
 }
 
-/// One digest over a desk's providers, sorted by name: the runner's
-/// `desk_providers::digest_of`. `status` answers it.
+/// One digest over a desk's providers, sorted by name: the providers digest
+/// the contract defines, which the Enclave pins. `status` answers it.
 ///
 /// # Errors
 /// As [`entry`].
@@ -152,25 +166,35 @@ pub fn config_digest_of(input: &Input) -> Result<String, String> {
 /// choose the same profile.
 ///
 /// # Errors
-/// `PROVIDER_PROFILE_AMBIGUOUS` or `PROVIDER_PROFILE_NOT_FOUND`: EKKA never
-/// guesses which profile the gateway applies.
-pub fn platform_profile(id: &str, seen: Vec<ProviderProfile>) -> Result<ProviderProfile, String> {
+/// `PROVIDER_PROFILE_AMBIGUOUS` ([`Miss::Ambiguous`]) or
+/// `PROVIDER_PROFILE_NOT_FOUND` ([`Miss::Profile`]): EKKA never guesses which
+/// profile the gateway applies.
+pub fn platform_profile(
+    id: &str,
+    seen: Vec<ProviderProfile>,
+) -> Result<ProviderProfile, (Miss, String)> {
     let norm = |x: &str| x.trim().to_ascii_lowercase();
     let want = norm(id);
     let mut same: Vec<ProviderProfile> = seen.into_iter().filter(|p| norm(&p.id) == want).collect();
     for scope in ["static", "platform"] {
         let n = same.iter().filter(|p| p.scope == scope).count();
         if n > 1 {
-            return Err(format!(
-                "PROVIDER_PROFILE_AMBIGUOUS: the desk backend lists {n} {scope} profiles '{id}'; which one it applies cannot be told"
+            return Err((
+                Miss::Ambiguous,
+                format!(
+                    "PROVIDER_PROFILE_AMBIGUOUS: the desk backend lists {n} {scope} profiles '{id}'; which one it applies cannot be told"
+                ),
             ));
         }
         if let Some(i) = same.iter().position(|p| p.scope == scope) {
             return Ok(same.swap_remove(i));
         }
     }
-    Err(format!(
-        "PROVIDER_PROFILE_NOT_FOUND: no static or platform profile '{id}' is listed in the desk workspace"
+    Err((
+        Miss::Profile,
+        format!(
+            "PROVIDER_PROFILE_NOT_FOUND: no static or platform profile '{id}' is listed in the desk workspace"
+        ),
     ))
 }
 
@@ -180,16 +204,18 @@ pub fn platform_profile(id: &str, seen: Vec<ProviderProfile>) -> Result<Provider
 /// the workspace sees.
 ///
 /// # Errors
-/// `PROVIDER_NOT_FOUND`, a profile refusal, or `PROVIDER_UNREADABLE` with the
-/// gateway's code (`UNAUTHENTICATED` drops the token).
+/// What was missed and why: `PROVIDER_NOT_FOUND` ([`Miss::Provider`]), a
+/// profile refusal ([`Miss::Profile`] or [`Miss::Ambiguous`]), or
+/// `PROVIDER_UNREADABLE` with the gateway's code ([`Miss::Gateway`]; the
+/// caller drops the token on `UNAUTHENTICATED`).
 pub async fn read(
     gw: &crate::gateway::Gateway,
     bearer: &str,
     name: &str,
-) -> Result<(Provider, ProviderProfile), (crate::gateway::GatewayError, String)> {
+) -> Result<(Provider, ProviderProfile), (Miss, String)> {
     let unreadable = |e: crate::gateway::GatewayError, what: &str| {
         let why = format!("PROVIDER_UNREADABLE: {what} could not be read: {e}");
-        (e, why)
+        (Miss::Gateway(e), why)
     };
     let p = gw
         .provider(bearer, name)
@@ -197,7 +223,7 @@ pub async fn read(
         .map_err(|e| unreadable(e, &format!("provider '{name}'")))?
         .ok_or_else(|| {
             (
-                crate::gateway::GatewayError::NotFound,
+                Miss::Provider,
                 format!("PROVIDER_NOT_FOUND: the desk backend has no provider '{name}' in the desk workspace; connect '{name}' on the desk backend, then try again"),
             )
         })?;
@@ -207,19 +233,15 @@ pub async fn read(
             .provider_profiles(bearer)
             .await
             .map_err(|e| unreadable(e, &what))?;
-        platform_profile(&p.r#type, seen).map_err(|why| {
-            (
-                crate::gateway::GatewayError::NotFound,
-                format!("{why} ({what})"),
-            )
-        })?
+        platform_profile(&p.r#type, seen)
+            .map_err(|(miss, why)| (miss, format!("{why} ({what})")))?
     } else {
         gw.provider_profile(bearer, &p.r#type, &p.profile_workspace)
             .await
             .map_err(|e| unreadable(e, &what))?
             .ok_or_else(|| {
                 (
-                    crate::gateway::GatewayError::NotFound,
+                    Miss::Profile,
                     format!("PROVIDER_PROFILE_NOT_FOUND: {what} does not exist"),
                 )
             })?

@@ -421,16 +421,16 @@ fn a_releasing_entry_for_a_record_still_running_is_kept_until_it_settles() {
     assert!(!entry.exists(), "cleared once released");
 }
 
-/// grant_facts, until the adapter computes the facts: an admitted read refused
-/// NOT_AVAILABLE by name, with no record written and no gateway call.
+/// grant_facts through the operations: a read, so no record is written; with
+/// no baseline it is refused by name before any gateway call.
 #[tokio::test]
-async fn the_grant_facts_read_is_refused_by_name_and_touches_nothing() {
+async fn the_grant_facts_read_records_nothing_and_needs_its_baseline_first() {
     let w = world().await;
     let s = store(&w);
     let a = deliver(&w, &s, &route(Operation::GrantFacts, None), &Bytes::new()).await;
     assert_eq!(
         (a.outcome, a.code),
-        (Outcome::Refused, Some(Code::NotAvailable)),
+        (Outcome::Refused, Some(Code::BaselinePolicyMissing)),
         "{a:?}"
     );
     assert!(!record_path(&w).exists(), "a read records nothing");

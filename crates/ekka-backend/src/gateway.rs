@@ -347,8 +347,6 @@ impl Gateway {
     /// # Errors
     /// Any refusal on any page, and [`GatewayError::Incomplete`] past
     /// [`MAX_PAGES`].
-    // Read by `grant_facts`, which the next change answers with it.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn providers(&self, bearer: &str) -> Result<Vec<Provider>, GatewayError> {
         let mut out = Vec::new();
         let mut page_token = String::new();

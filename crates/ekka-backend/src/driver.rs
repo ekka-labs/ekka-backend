@@ -90,7 +90,14 @@ pub struct Backend {
     pub permits: std::sync::Arc<crate::permits::Permits>,
     /// How `discovery_evidence` waits for a desk to settle.
     pub evidence: discovery::EvidenceTimings,
+    /// The baseline policy `grant_facts` digests: [`BASELINE_POLICY`] in the
+    /// adapter that serves calls; a test points it at its own file.
+    pub baseline_policy: std::path::PathBuf,
 }
+
+/// Where the installer mounts the installation's baseline policy, read-only
+/// (contracts 0.83.0). No request and no configuration names another path.
+pub const BASELINE_POLICY: &str = "/etc/ekka-backend/baseline-policy.json";
 
 /// Where the driver writes a change's answer before it releases the claim.
 /// A production build has only a store: "no records" cannot be built
@@ -680,8 +687,10 @@ impl Backend {
         for p in &body.providers {
             let got = match providers::read(&self.gateway, &bearer, p).await {
                 Ok((rec, prof)) => providers::config_digest(p, &rec, &prof).ok(),
-                Err((GatewayError::NotFound, _)) => None,
-                Err((e, _)) => return self.read_failed(&e),
+                Err((providers::Miss::Gateway(e), _)) if e != GatewayError::NotFound => {
+                    return self.read_failed(&e)
+                }
+                Err(_) => None,
             };
             if got.is_none() || got.as_ref() != grant.provider_config_digests.get(p) {
                 return refused(Code::ConstraintProviderConfigDigests);
@@ -857,8 +866,10 @@ impl Backend {
         for p in names {
             let now = match providers::read(&self.gateway, bearer, p).await {
                 Ok((rec, prof)) => providers::config_digest(p, &rec, &prof).ok(),
-                Err((GatewayError::NotFound, _)) => None,
-                Err((e, _)) => return Err(e),
+                Err((providers::Miss::Gateway(e), _)) if e != GatewayError::NotFound => {
+                    return Err(e)
+                }
+                Err(_) => None,
             };
             if now.is_none() || now.as_ref() != pins.get(p) {
                 tracing::warn!(provider = %p, "providerChangedDuringCreate");
@@ -1326,6 +1337,10 @@ pub(crate) mod tests;
 /// `approval_mode` and `discovery_evidence`.
 #[path = "discovery.rs"]
 pub(crate) mod discovery;
+
+/// `grant_facts`.
+#[path = "grant_facts.rs"]
+pub(crate) mod grant_facts;
 
 /// A policy document is sent only when its JSON is at most [`crate::answer::POLICY_MAX_BYTES`] (contracts 0.75.0,
 /// `result.policy`); a larger one is left out and its digest still names it.

@@ -185,6 +185,7 @@ async fn run(path: PathBuf) -> Result<(), String> {
         // The discovery permits: an unsafe folder stops the adapter.
         permits: std::sync::Arc::new(permits::Permits::open(&c.state_dir, uid)?),
         evidence: driver::discovery::EvidenceTimings::default(),
+        baseline_policy: driver::BASELINE_POLICY.into(),
     });
     let verifier = std::sync::Arc::new(token::Verifier::new(c, Box::new(chrono::Utc::now))?);
     // Recovery of a change still running, and its settle markers.

@@ -112,6 +112,8 @@ pub(crate) async fn world() -> World {
         settle_for: SETTLE_FOR,
         permits: std::sync::Arc::new(crate::permits::Permits::open(dir.path(), uid()).unwrap()),
         evidence: super::discovery::EvidenceTimings::default(),
+        // No file until a test writes one: grant_facts answers MISSING.
+        baseline_policy: dir.path().join("baseline-policy.json"),
     };
     World { b, gw, enc, dir }
 }

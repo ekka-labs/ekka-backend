@@ -1440,7 +1440,7 @@ fn the_contracts_settle_files_are_what_recovery_reads() {
 }
 
 /// Every refusal code the adapter can answer is one the contract names
-/// (0.67.0 adds NOT_APPLIED; 0.76.0 the three discovery codes). The match below fails to compile when a code
+/// (0.67.0 adds NOT_APPLIED; 0.76.0 the three discovery codes; 0.83.0 the five grant_facts codes). The match below fails to compile when a code
 /// is added without being listed here.
 #[test]
 fn every_answer_code_is_the_contracts() {
@@ -1477,7 +1477,12 @@ fn every_answer_code_is_the_contracts() {
             | NotApplied
             | DeskNotDiscovery
             | DiscoveryWindowClosed
-            | ApprovalModeNotApplied => {}
+            | ApprovalModeNotApplied
+            | BaselinePolicyMissing
+            | BaselinePolicyUnreadable
+            | BaselinePolicyInvalid
+            | ProvidersUnreadable
+            | ProvidersTooMany => {}
         }
     }
     let all = [
@@ -1512,6 +1517,11 @@ fn every_answer_code_is_the_contracts() {
         DeskNotDiscovery,
         DiscoveryWindowClosed,
         ApprovalModeNotApplied,
+        BaselinePolicyMissing,
+        BaselinePolicyUnreadable,
+        BaselinePolicyInvalid,
+        ProvidersUnreadable,
+        ProvidersTooMany,
     ];
     let schema = vendored("backend-v1.schema.json");
     let named: Vec<&str> = schema["$defs"]["code"]["enum"]
@@ -1526,6 +1536,20 @@ fn every_answer_code_is_the_contracts() {
         let wire = wire.as_str().unwrap();
         assert!(named.contains(&wire), "{wire} is not a contract code");
     }
+    // A provider's own code in grant_facts: exactly the provider_fact list.
+    use crate::answer::FactCode;
+    let fact = |c: FactCode| match c {
+        FactCode::ProviderProfileMissing | FactCode::ProviderUnreadable => {
+            serde_json::to_value(c).unwrap()
+        }
+    };
+    assert_eq!(
+        schema["$defs"]["provider_fact"]["properties"]["code"]["enum"],
+        json!([
+            fact(FactCode::ProviderProfileMissing),
+            fact(FactCode::ProviderUnreadable)
+        ])
+    );
 }
 
 /// The plan's order: a change's claim is released only after its record is
@@ -1586,4 +1610,40 @@ async fn a_recovery_of_a_change_that_never_settles_answers_within_the_short_wind
     );
     assert_eq!(r.state(&rid(1)), State::Running);
     assert!(r.held(DESK));
+}
+
+/// grant_facts writes nothing: an owed release is left for the next call
+/// that may write, never run by this read.
+#[tokio::test]
+async fn grant_facts_never_runs_an_owed_release() {
+    let r = rig().await;
+    r.w.enc
+        .lock()
+        .unwrap()
+        .release_refusals
+        .push("the desk lock cannot be removed: planted".into());
+    assert_eq!(r.stop(DESK, 1).await.outcome, Outcome::Ready);
+    assert!(r.held(DESK), "the release failed: owed");
+    let h = header(&signed(2, "read", None), KID, &govern_test_key());
+    let id = op_id(2);
+    let verified =
+        r.v.verify(&call(Operation::GrantFacts, &h, &id, b""))
+            .unwrap();
+    let route = Route {
+        operation: Operation::GrantFacts,
+        desk: None,
+        provider: None,
+    };
+    let a = crate::ops::answer(&r.w.b, &r.r, &route, verified, &Bytes::new()).await;
+    assert_eq!(a.code, Some(Code::BaselinePolicyMissing), "{a:?}");
+    assert!(r.held(DESK), "still owed: the read ran no release");
+    assert_eq!(
+        r.r.store()
+            .get(&rid(1))
+            .unwrap()
+            .unwrap()
+            .release_pending
+            .map(|p| p.outcome),
+        Some("ready".to_string())
+    );
 }

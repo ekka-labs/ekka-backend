@@ -71,7 +71,10 @@ pub(crate) async fn answer(
 ) -> Answer {
     // A settled change's release that did not go through is retried
     // first, at every call: it never waits on a call for its own desk.
-    b.release_pending().await;
+    // Except grant_facts, which writes nothing: a release writes a record.
+    if route.operation != Operation::GrantFacts {
+        b.release_pending().await;
+    }
     let store = recovery.store();
     let desk = desk_of(route, body);
     if !route.operation.mutates() {
@@ -286,9 +289,8 @@ async fn dispatch(
             }
         }
         Operation::DiscoveryEvidence => b.discovery_evidence(a, desk).await,
-        // grant_facts: refused by name until the adapter computes the facts,
-        // never answered empty. provider_connect: reserved in v1, providers
-        // are set at install.
-        Operation::GrantFacts | Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
+        Operation::GrantFacts => b.grant_facts(a).await,
+        // Reserved in v1: providers are set at install.
+        Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
     }
 }
