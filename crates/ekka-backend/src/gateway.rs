@@ -20,8 +20,8 @@ use openshell_proto::openshell::v1::{
     DetachSandboxProviderRequest, DraftHistoryEntry, GetDraftHistoryRequest, GetDraftPolicyRequest,
     GetProviderProfileRequest, GetProviderRequest, GetSandboxLogsRequest,
     GetSandboxPolicyStatusRequest, GetSandboxPolicyStatusResponse, GetSandboxRequest,
-    ListProviderProfilesRequest, PolicyChunk, ProviderProfile, Sandbox, SandboxLogLine,
-    StartSandboxRequest, StopSandboxRequest, UpdateConfigRequest,
+    ListProviderProfilesRequest, ListProvidersRequest, PolicyChunk, ProviderProfile, Sandbox,
+    SandboxLogLine, StartSandboxRequest, StopSandboxRequest, UpdateConfigRequest,
 };
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
@@ -332,6 +332,38 @@ impl Gateway {
                 .await?
                 .into_inner();
             out.extend(page.profiles);
+            if page.next_page_token.is_empty() {
+                return Ok(out);
+            }
+            page_token = page.next_page_token;
+        }
+        Err(GatewayError::Incomplete)
+    }
+
+    /// Every provider record in the desk workspace, all pages, in the
+    /// gateway's order. A list that cannot be read whole is an error, never a
+    /// shorter list.
+    ///
+    /// # Errors
+    /// Any refusal on any page, and [`GatewayError::Incomplete`] past
+    /// [`MAX_PAGES`].
+    // Read by `grant_facts`, which the next change answers with it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn providers(&self, bearer: &str) -> Result<Vec<Provider>, GatewayError> {
+        let mut out = Vec::new();
+        let mut page_token = String::new();
+        for _ in 0..MAX_PAGES {
+            let req = Self::request(
+                ListProvidersRequest {
+                    workspace_scope: self.scope(),
+                    page_size: 1000,
+                    page_token: page_token.clone(),
+                    label_selector: String::new(),
+                },
+                bearer,
+            )?;
+            let page = self.grpc.clone().list_providers(req).await?.into_inner();
+            out.extend(page.providers);
             if page.next_page_token.is_empty() {
                 return Ok(out);
             }
