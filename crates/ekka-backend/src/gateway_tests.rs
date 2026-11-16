@@ -258,3 +258,100 @@ async fn a_gateway_call_that_never_answers_fails_at_its_time_limit() {
         started.elapsed()
     );
 }
+
+fn named(name: &str) -> Provider {
+    let mut p = records().0;
+    p.metadata.get_or_insert_with(Default::default).name = name.into();
+    p
+}
+
+fn names(list: &[Provider]) -> Vec<String> {
+    list.iter()
+        .map(|p| {
+            p.metadata
+                .as_ref()
+                .map(|m| m.name.clone())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The provider list is read whole, every page, in the desk workspace.
+#[tokio::test]
+async fn every_provider_is_listed_across_every_page() {
+    let (tokens, client, gw, _idp) = setup().await;
+    {
+        let mut s = gw.lock().unwrap();
+        for n in ["a", "b", "c", "d", "e"] {
+            s.providers.insert(n.into(), named(n));
+        }
+        s.provider_page_size = Some(2);
+    }
+    let bearer = tokens.bearer(SECRET).await.unwrap();
+    let got = client.providers(&bearer).await.unwrap();
+    assert_eq!(names(&got), ["a", "b", "c", "d", "e"]);
+    let s = gw.lock().unwrap();
+    assert_eq!(
+        s.calls,
+        [
+            "ListProviders desks from=",
+            "ListProviders desks from=2",
+            "ListProviders desks from=4"
+        ]
+    );
+    assert!(s.request_ids.is_empty(), "a list changes nothing");
+}
+
+/// An empty workspace is an empty list, not an error.
+#[tokio::test]
+async fn a_workspace_with_no_provider_lists_none() {
+    let (tokens, client, _gw, _idp) = setup().await;
+    let bearer = tokens.bearer(SECRET).await.unwrap();
+    assert!(client.providers(&bearer).await.unwrap().is_empty());
+}
+
+/// A list that cannot be read whole is an error, never the pages before it:
+/// a refusal on the first or a later page, a refused token, or a list with
+/// no end.
+#[tokio::test]
+async fn a_list_not_read_whole_is_refused_never_cut_short() {
+    use crate::gateway::GatewayError;
+    for (page, code, want) in [
+        (0, tonic::Code::Unavailable, GatewayError::Unavailable),
+        (1, tonic::Code::Unavailable, GatewayError::Unavailable),
+        (
+            2,
+            tonic::Code::PermissionDenied,
+            GatewayError::PermissionDenied,
+        ),
+    ] {
+        let (tokens, client, gw, _idp) = setup().await;
+        {
+            let mut s = gw.lock().unwrap();
+            for n in ["a", "b", "c", "d", "e"] {
+                s.providers.insert(n.into(), named(n));
+            }
+            s.provider_page_size = Some(2);
+            s.fail_provider_page = Some((page, code));
+        }
+        let bearer = tokens.bearer(SECRET).await.unwrap();
+        assert_eq!(
+            client.providers(&bearer).await.unwrap_err(),
+            want,
+            "page {page}"
+        );
+    }
+    let (tokens, client, gw, _idp) = setup().await;
+    gw.lock().unwrap().endless_provider_pages = true;
+    let bearer = tokens.bearer(SECRET).await.unwrap();
+    assert_eq!(
+        client.providers(&bearer).await.unwrap_err(),
+        GatewayError::Incomplete
+    );
+    assert_eq!(gw.lock().unwrap().calls.len(), 100, "stops at MAX_PAGES");
+    let (_tokens, client, _gw, _idp) = setup().await;
+    assert_eq!(
+        client.providers("not-the-token").await.unwrap_err(),
+        GatewayError::Unauthenticated
+    );
+}

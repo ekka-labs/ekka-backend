@@ -17,7 +17,8 @@ use openshell_proto::openshell::datamodel::v1::{
 };
 use openshell_proto::openshell::v1::{
     GetProviderProfileRequest, GetProviderRequest, ListProviderProfilesRequest,
-    ListProviderProfilesResponse, ProviderProfile, ProviderProfileResponse, ProviderResponse,
+    ListProviderProfilesResponse, ListProvidersRequest, ListProvidersResponse, ProviderProfile,
+    ProviderProfileResponse, ProviderResponse,
 };
 use tonic::server::{Grpc, NamedService, UnaryService};
 use tonic::{Request, Response, Status};
@@ -39,6 +40,13 @@ pub struct State {
     pub profiles: BTreeMap<(String, String), ProviderProfile>,
     /// Every provider read is refused with this code.
     pub refuse_reads: Option<tonic::Code>,
+    /// The most providers one ListProviders page carries. `None`: all of
+    /// them on one page.
+    pub provider_page_size: Option<usize>,
+    /// ListProviders refuses this page (0 is the first) with this code.
+    pub fail_provider_page: Option<(usize, tonic::Code)>,
+    /// Every ListProviders page names a next page: a list with no end.
+    pub endless_provider_pages: bool,
     /// Sandboxes in the desk workspace, by name (`sandboxes.rs`).
     pub sandboxes: BTreeMap<String, openshell_proto::openshell::v1::Sandbox>,
     /// Each sandbox's policy revisions, the creation policy first.
@@ -57,7 +65,7 @@ pub struct State {
     /// Sandboxes being deleted so, and when each is gone.
     pub vanishing: BTreeMap<String, std::time::Instant>,
     /// The next this-many policy reads answer this error, as NVIDIA OpenShell
-    /// answers right after a create (measured on the walk box).
+    /// answers right after a create.
     pub fail_policy_reads: Option<(usize, tonic::Code)>,
     /// A policy read of a desk being deleted answers this error.
     pub policy_error_while_deleting: Option<tonic::Code>,
@@ -203,6 +211,52 @@ fn list_profiles(
     }))
 }
 
+/// Providers in name order; the page token is the offset of the page's first.
+fn list_providers(
+    st: &Shared,
+    r: Request<ListProvidersRequest>,
+) -> Result<Response<ListProvidersResponse>, Status> {
+    authorized(st, &r)?;
+    let q = r.into_inner();
+    let ws = workspace(q.workspace_scope.as_ref());
+    st.lock()
+        .unwrap()
+        .calls
+        .push(format!("ListProviders {ws} from={}", q.page_token));
+    refused(st)?;
+    let s = st.lock().unwrap();
+    let from: usize = if q.page_token.is_empty() {
+        0
+    } else {
+        q.page_token
+            .parse()
+            .map_err(|_| Status::invalid_argument("bad page token"))?
+    };
+    let size = s.provider_page_size.unwrap_or(usize::MAX).max(1);
+    if let Some((page, code)) = s.fail_provider_page {
+        if from / size == page {
+            return Err(Status::new(code, "refused"));
+        }
+    }
+    let providers: Vec<Provider> = s
+        .providers
+        .values()
+        .skip(from)
+        .take(size)
+        .cloned()
+        .collect();
+    let next = from.saturating_add(size);
+    let next_page_token = if s.endless_provider_pages || next < s.providers.len() {
+        next.to_string()
+    } else {
+        String::new()
+    };
+    Ok(Response::new(ListProvidersResponse {
+        providers,
+        next_page_token,
+    }))
+}
+
 struct Unary<F>(Shared, F);
 impl<Q: Send + 'static, P: Send + 'static, F> UnaryService<Q> for Unary<F>
 where
@@ -311,6 +365,11 @@ where
                 "/openshell.v1.OpenShell/GetProviderProfile" => {
                     Grpc::new(tonic_prost::ProstCodec::default())
                         .unary(Unary(st, get_profile), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/ListProviders" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, list_providers), req)
                         .await
                 }
                 "/openshell.v1.OpenShell/ListProviderProfiles" => {
