@@ -219,7 +219,7 @@ The release is OWED from the moment the answer is written: the record names it i
 
 A change still `running` is never finished by the adapter on its own. The next call for its desk, `status` or a change, takes each one first, oldest first (`recover.rs`). A change whose first attempt is still running in the adapter is never taken.
 
-**The host settle procedure** settles one change by hand, on the machine. It is part of the installer, not of this adapter: in [ekka-agent-desks](https://github.com/ekka-labs/ekka-agent-desks) it is `up.sh desks settle <desk> --operation <request id>`. Any installer can provide it, because all it does is write two files into the adapter's state directory, and both have a contract schema:
+**The host settle procedure** settles one change by hand, on the machine. It is part of the installer, not of this adapter: in the desks server setup it is `up.sh desks settle <desk> --operation <request id>`. Any installer can provide it, because all it does is write two files into the adapter's state directory, and both have a contract schema:
 
 - the settle hold, `settle/<request id>.hold` ([`settle-hold.v1`](vendor/contracts/backend/settle-hold.v1.schema.json)), written BEFORE the procedure restarts the desk backend;
 - the settle marker, `settle/<request id>.json` ([`settle-marker.v1`](vendor/contracts/backend/settle-marker.v1.schema.json)), written once the desk's containers have stopped changing.
@@ -243,7 +243,7 @@ The adapter takes each running change through these rules, in order:
 
 5. **Otherwise it stays `running`.** Only the host settle procedure settles it.
 
-**The settle hold.** While a hold stands, the adapter never re-issues that change, whatever asks. A `status` during the quiet window then sends nothing, so the marker's restart stays after the last send and the marker counts. A hold that is not a regular 0600 file of the adapter's user, or is not exactly `{operation_id, held_at}` for this change, counts as no hold (logged): a hold can only stop sends. If the procedure stops without a marker, the hold stays and the change stays held. Check the desk, then remove the hold with the installer's unhold step (in ekka-agent-desks: `up.sh desks unhold <desk> --operation <request id>`).
+**The settle hold.** While a hold stands, the adapter never re-issues that change, whatever asks. A `status` during the quiet window then sends nothing, so the marker's restart stays after the last send and the marker counts. A hold that is not a regular 0600 file of the adapter's user, or is not exactly `{operation_id, held_at}` for this change, counts as no hold (logged): a hold can only stop sends. If the procedure stops without a marker, the hold stays and the change stays held. Check the desk, then remove the hold with the installer's unhold step (in the desks server setup: `up.sh desks unhold <desk> --operation <request id>`).
 
 A refusal or an answer whose record cannot be written is tried twice; still unwritten, the call answers `running` (the record still says so), and recovery settles it later.
 
