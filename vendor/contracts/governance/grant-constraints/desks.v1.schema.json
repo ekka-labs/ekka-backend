@@ -166,6 +166,26 @@
             }
           }
         },
+        "projects": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "OPTIONAL: the server's own projects, each a team's desk image and its own reviewed policy. Absent or empty means none. A project widens nothing by itself: its `image_id` must also be in `image_digests` and its `policy_digest` in `policy_digests`, and every reader refuses a grant where either is missing. A schema cannot state that rule. Two entries never share a name.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "image_id", "policy_digest", "since"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name", "description": "The project's name on this server." },
+              "image_id": { "$ref": "#/$defs/digest", "description": "The project's desk image: the local content ID of an image built on the server." },
+              "policy_digest": { "$ref": "#/$defs/digest", "description": "The digest the adapter computes for the project's own policy." },
+              "since": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+                "description": "When the project entered the grant, UTC, to the second. A reader also parses it as a real calendar time and refuses one that is not (for example 30 February)."
+              }
+            }
+          }
+        },
         "requires_role": {
           "const": "admin",
           "description": "The organization role a run must have been started by for Govern to sign a token from this grant. Govern checks it when the grant is used; the adapter does not."
