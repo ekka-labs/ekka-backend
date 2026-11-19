@@ -128,6 +128,13 @@ pub(crate) struct Network {
 /// # Errors
 /// The first rule broken, naming the field.
 pub(crate) fn check(value: &Value) -> Result<(), String> {
+    // The two optional blocks are absent or present, never null: serde reads a
+    // null as absent, which would skip every check on them.
+    for k in ["discovery", "projects"] {
+        if value.get(k).is_some_and(Value::is_null) {
+            return Err(format!("{k} must be absent or present, never null"));
+        }
+    }
     let c: DeskConstraints = serde_json::from_value(value.clone())
         .map_err(|e| format!("not desk grant limits (desks.v1): {e}"))?;
     list("image_digests", &c.image_digests, 1, 32, is_digest)?;
@@ -248,8 +255,12 @@ fn check_projects(
                 "{at}.policy_digest: not a digest in policy_digests"
             ));
         }
-        // To the second: the schema allows no fraction here.
-        if p.since.len() != 20 || utc(&p.since).is_none() {
+        // To the second, seconds 00 to 59: the schema allows no fraction and no
+        // leap second, which the time parser would otherwise accept.
+        if p.since.len() != 20
+            || p.since.get(17..19).is_none_or(|s| s > "59")
+            || utc(&p.since).is_none()
+        {
             return Err(format!(
                 "{at}.since must be a UTC time to the second, ending in Z"
             ));

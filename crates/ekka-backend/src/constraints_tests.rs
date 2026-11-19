@@ -175,6 +175,16 @@ fn the_mirror_is_the_vendored_schema() {
     assert_eq!(keys(&pr["items"]["properties"]), item);
     assert_eq!(req(&pr["items"]), item);
     assert_eq!(pr["items"]["additionalProperties"], false);
+    assert_eq!(pr["type"], "array");
+    assert_eq!(pr["items"]["type"], "object");
+    let ip = &pr["items"]["properties"];
+    assert_eq!(ip["name"]["$ref"], "#/$defs/name");
+    assert_eq!(ip["image_id"]["$ref"], "#/$defs/digest");
+    assert_eq!(ip["policy_digest"]["$ref"], "#/$defs/digest");
+    assert_eq!(
+        ip["since"]["pattern"],
+        "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
+    );
     // Contracts 0.76.0: the optional discovery window, closed.
     let d = &s["properties"]["discovery"];
     let disc = ["expires_at", "image_digests", "name_prefix", "providers"];
@@ -414,6 +424,12 @@ fn projects_are_held_to_the_schema_and_widen_nothing() {
             "30 February",
             with(&|v| v["projects"][0]["since"] = json!("2026-02-30T09:00:00Z")),
         ),
+        (
+            "a leap second",
+            with(&|v| v["projects"][0]["since"] = json!("2026-11-19T09:00:60Z")),
+        ),
+        ("projects null", with(&|v| v["projects"] = Value::Null)),
+        ("discovery null", with(&|v| v["discovery"] = Value::Null)),
     ];
     for (what, v) in planted {
         assert!(check(&v).is_err(), "{what} must be refused");
