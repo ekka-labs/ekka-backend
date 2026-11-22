@@ -727,7 +727,7 @@ async fn manual_never_re_pins_the_desk_to_its_widened_policy() {
 }
 
 /// Every change the adapter makes on one desk, each through its own call,
-/// all `ready`: the params of every claim it sent, in order.
+/// all `ready`: every claim request it sent, whole, in order.
 async fn claims_of_every_change() -> Vec<Value> {
     let w = world().await;
     let policy: crate::enforce::PolicySetBody = serde_json::from_value(
@@ -758,11 +758,9 @@ async fn claims_of_every_change() -> Vec<Value> {
     for a in &answers {
         assert_eq!(a.outcome, Outcome::Ready, "{a:?}");
     }
-    let calls = w.enc.lock().unwrap().calls();
-    calls
-        .into_iter()
-        .filter(|(m, _)| m == "runner_desk_claim")
-        .map(|(_, p)| p)
+    let seen = w.enc.lock().unwrap().seen.clone();
+    seen.into_iter()
+        .filter(|r| r["method"] == "runner_desk_claim")
         .collect()
 }
 
@@ -773,7 +771,11 @@ async fn claims_of_every_change() -> Vec<Value> {
 /// vendored contract's operations that change one desk.
 #[tokio::test]
 async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
-    let claims = claims_of_every_change().await;
+    let claims: Vec<Value> = claims_of_every_change()
+        .await
+        .into_iter()
+        .map(|r| r["params"].clone())
+        .collect();
     let named: Vec<&str> = claims
         .iter()
         .map(|p| p["operation"].as_str().unwrap_or("(none)"))
@@ -820,11 +822,12 @@ async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
     assert_eq!(seen, desk_changes);
 }
 
-/// Every claim the adapter sends is a claim request the vendored contract
-/// accepts: no param it does not name, every param it requires, and an
-/// `operation` from its closed list, which is exactly the list the adapter
-/// sends. Fails while the vendored contracts predate `operation`: vendor the
-/// release that defines it before this adapter ships.
+/// Every claim the adapter sends, whole, is a claim request the vendored
+/// contract accepts: no field or param it does not name, every one it
+/// requires, its `jsonrpc`, `method` and `id` type, and an `operation` from
+/// its closed list, which is exactly the list the adapter sends. Fails while
+/// the vendored contracts predate `operation`: vendor the release that
+/// defines it before this adapter ships.
 #[tokio::test]
 async fn every_claim_sent_is_the_vendored_contracts_claim_request() {
     let s: Value = serde_json::from_str(include_str!(concat!(
@@ -832,7 +835,18 @@ async fn every_claim_sent_is_the_vendored_contracts_claim_request() {
         "/../../vendor/contracts/backend/desk-claim.v1.schema.json"
     )))
     .unwrap();
-    let params = &s["$defs"]["claim_request"]["properties"]["params"];
+    let names = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_str().unwrap().to_string())
+            .collect()
+    };
+    let request = &s["$defs"]["claim_request"];
+    assert_eq!(request["additionalProperties"], false);
+    let fields = request["properties"].as_object().unwrap();
+    let id_types = names(&s["$defs"]["id"]["type"]);
+    let params = &request["properties"]["params"];
     assert_eq!(params["additionalProperties"], false);
     let named = params["properties"].as_object().unwrap();
     let required: Vec<&str> = params["required"]
@@ -845,7 +859,26 @@ async fn every_claim_sent_is_the_vendored_contracts_claim_request() {
         .as_array()
         .map(|l| l.iter().map(|o| o.as_str().unwrap()).collect())
         .unwrap_or_default();
-    let claims = claims_of_every_change().await;
+    let requests = claims_of_every_change().await;
+    for r in &requests {
+        for k in r.as_object().unwrap().keys() {
+            assert!(fields.contains_key(k), "no `{k}` field: {r}");
+        }
+        for k in names(&request["required"]) {
+            assert!(r.get(&k).is_some(), "`{k}` is required: {r}");
+        }
+        assert_eq!(r["jsonrpc"], s["$defs"]["jsonrpc"]["const"], "{r}");
+        assert_eq!(r["method"], request["properties"]["method"]["const"], "{r}");
+        let id_type = if r["id"].is_u64() || r["id"].is_i64() {
+            "integer"
+        } else if r["id"].is_string() {
+            "string"
+        } else {
+            "neither"
+        };
+        assert!(id_types.iter().any(|t| t == id_type), "{r}");
+    }
+    let claims: Vec<Value> = requests.iter().map(|r| r["params"].clone()).collect();
     for p in &claims {
         for k in p.as_object().unwrap().keys() {
             assert!(
