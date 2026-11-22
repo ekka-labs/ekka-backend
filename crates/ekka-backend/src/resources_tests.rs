@@ -1,0 +1,211 @@
+//! The limit's shape on the wire and in the backend's record.
+
+use serde_json::{json, Value};
+
+use super::{Ceiling, Held, Resources};
+
+const ASKED: Resources = Resources {
+    cpu_millicores: 2000,
+    memory_mib: 4096,
+};
+
+fn held(v: Value) -> Held {
+    Held::read(Some(&v))
+}
+
+/// The create sends limits only, in the two keys NVIDIA OpenShell reads, as
+/// whole millicores and whole MiB.
+#[test]
+fn a_create_sends_cpu_and_memory_limits_and_nothing_else() {
+    let s = ASKED.template();
+    let json = super::json(&s);
+    assert_eq!(
+        json,
+        json!({ "limits": { "cpu": "2000m", "memory": "4096Mi" } })
+    );
+    assert_eq!(held(json), Held::Limit(ASKED));
+}
+
+/// The backend's record is read as the same two whole numbers in any
+/// spelling the gateway might keep, and as nothing it cannot state.
+#[test]
+fn the_backends_record_is_read_exactly_or_not_at_all() {
+    for (spelled, why) in [
+        (
+            json!({ "limits": { "cpu": "2", "memory": "4Gi" } }),
+            "whole CPUs and GiB",
+        ),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "4294967296" } }),
+            "bytes",
+        ),
+        (
+            json!({ "limits": { "cpu": "2.000", "memory": "4194304Ki" } }),
+            "decimal CPUs and KiB",
+        ),
+    ] {
+        assert_eq!(held(spelled), Held::Limit(ASKED), "{why}");
+    }
+    assert_eq!(
+        held(json!({ "limits": { "cpu": "1.5", "memory": "4096Mi" } })),
+        Held::Limit(Resources {
+            cpu_millicores: 1500,
+            memory_mib: 4096
+        }),
+        "a CPU and a half is exactly 1500 millicores"
+    );
+    assert_eq!(Held::read(None), Held::None);
+    assert_eq!(Held::read(Some(&Value::Null)), Held::None);
+    for (v, why) in [
+        (
+            json!({ "limits": { "cpu": "1.2345", "memory": "4096Mi" } }),
+            "finer than a millicore",
+        ),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "1536Ki" } }),
+            "KiB that are not a whole MiB",
+        ),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "4G" } }),
+            "decimal gigabytes",
+        ),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "4294967295" } }),
+            "not a whole MiB",
+        ),
+        (json!({ "limits": { "cpu": "2000m" } }), "no memory"),
+        (json!({ "limits": { "memory": "4096Mi" } }), "no CPU"),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "4096Mi", "nvidia.com/gpu": "1" } }),
+            "another limit",
+        ),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "4096Mi" }, "requests": { "cpu": "500m" } }),
+            "a request",
+        ),
+        (json!({ "cpu": "8" }), "no limits object"),
+        (
+            json!({ "limits": { "cpu": "-2000m", "memory": "4096Mi" } }),
+            "a sign",
+        ),
+        (
+            json!({ "limits": { "cpu": 2000, "memory": "4096Mi" } }),
+            "a number, not a quantity",
+        ),
+        (
+            json!({ "limits": { "cpu": "50m", "memory": "4096Mi" } }),
+            "below the contract's bounds",
+        ),
+        (json!([]), "not an object"),
+    ] {
+        assert_eq!(held(v), Held::Other, "{why}");
+    }
+}
+
+/// At most the ceiling, each value; the ceiling itself is allowed.
+#[test]
+fn a_limit_is_at_most_its_grants_ceiling() {
+    let c = Ceiling {
+        max_cpu_millicores: 4000,
+        max_memory_mib: 8192,
+    };
+    assert!(ASKED.within(&c));
+    let at = Resources {
+        cpu_millicores: 4000,
+        memory_mib: 8192,
+    };
+    assert!(at.within(&c));
+    assert!(!Resources {
+        cpu_millicores: 4001,
+        ..at
+    }
+    .within(&c));
+    assert!(!Resources {
+        memory_mib: 8193,
+        ..at
+    }
+    .within(&c));
+}
+
+/// The contract's bounds: a tenth of a CPU to 256 CPUs, 256 MiB to 4 TiB.
+#[test]
+fn the_bounds_are_the_contracts() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../vendor/contracts/backend/backend-v1.schema.json"
+    );
+    let s: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let p = &s["$defs"]["resources"]["properties"];
+    assert_eq!(
+        p["cpu_millicores"]["minimum"],
+        *super::CPU_MILLICORES.start()
+    );
+    assert_eq!(p["cpu_millicores"]["maximum"], *super::CPU_MILLICORES.end());
+    assert_eq!(p["memory_mib"]["minimum"], *super::MEMORY_MIB.start());
+    assert_eq!(p["memory_mib"]["maximum"], *super::MEMORY_MIB.end());
+    assert_eq!(s["$defs"]["resources"]["additionalProperties"], false);
+    assert!(Resources {
+        cpu_millicores: 100,
+        memory_mib: 256
+    }
+    .in_bounds());
+    assert!(!Resources {
+        cpu_millicores: 99,
+        memory_mib: 256
+    }
+    .in_bounds());
+    assert!(!Resources {
+        cpu_millicores: 100,
+        memory_mib: 4_194_305
+    }
+    .in_bounds());
+}
+
+/// A limit is a JSON integer: `2000.0` is refused like a fraction, never
+/// read through a float, where a long fraction could round to a whole number.
+#[test]
+fn a_limit_is_a_json_integer_never_a_float() {
+    let r: Resources =
+        serde_json::from_str(r#"{ "cpu_millicores": 2000, "memory_mib": 4096 }"#).unwrap();
+    assert_eq!(r, ASKED);
+    for bad in [
+        r#"{ "cpu_millicores": 2000.0, "memory_mib": 4096 }"#,
+        r#"{ "cpu_millicores": 2000, "memory_mib": 255.999999999999999999 }"#,
+        r#"{ "cpu_millicores": -2000, "memory_mib": 4096 }"#,
+        r#"{ "cpu_millicores": "2000", "memory_mib": 4096 }"#,
+    ] {
+        assert!(serde_json::from_str::<Resources>(bad).is_err(), "{bad}");
+    }
+}
+
+/// Every exact spelling NVIDIA OpenShell reads the same way is read; a value
+/// that is not whole millicores or whole MiB is not.
+#[test]
+fn quantities_are_read_with_exact_arithmetic() {
+    let limit =
+        |cpu: &str, memory: &str| held(json!({ "limits": { "cpu": cpu, "memory": memory } }));
+    for (cpu, memory, want) in [
+        ("1.5000", "1.5Gi", (1500, 1536)),
+        ("1500m", "0.5Gi", (1500, 512)),
+        ("1500.0m", "1610612736", (1500, 1536)),
+        ("2", "4294.967296M", (2000, 4096)),
+    ] {
+        assert_eq!(
+            limit(cpu, memory),
+            Held::Limit(Resources {
+                cpu_millicores: want.0,
+                memory_mib: want.1
+            }),
+            "{cpu} {memory}"
+        );
+    }
+    for (cpu, memory) in [
+        ("1.5005", "4Gi"),
+        ("2", "1.0000001Gi"),
+        ("2", "4G"),
+        ("2e3m", "4Gi"),
+        ("2", "4.Gi"),
+    ] {
+        assert_eq!(limit(cpu, memory), Held::Other, "{cpu} {memory}");
+    }
+}

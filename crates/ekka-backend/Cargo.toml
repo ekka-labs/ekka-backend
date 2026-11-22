@@ -30,6 +30,8 @@ rustix         = { version = "1.1", default-features = false, features = ["std",
 ed25519-dalek  = { version = "2", default-features = false, features = ["std"] }
 chrono         = { version = "0.4", default-features = false, features = ["std", "clock"] }
 prost          = { workspace = true }
+# A desk's CPU and memory limit is a template `google.protobuf.Struct`.
+prost-types    = { workspace = true }
 prost-reflect  = { workspace = true }
 openshell-proto = { path = "../openshell-proto" }
 # The gateway and its sign-in service: tonic over rustls with the ring backend

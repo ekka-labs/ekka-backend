@@ -167,16 +167,50 @@ backend is called. A refusal names the limit. In NVIDIA OpenShell's proto (pin
 | `policy_baseline.must_equal`: `filesystem` | `SandboxPolicy.filesystem` | byte-equal (canonical JSON) to the baseline: on a change, the desk's creation policy (`CONSTRAINT_POLICY_BASELINE`) |
 | `must_equal`: `process` | `SandboxPolicy.process` | as `filesystem` |
 | `must_equal`: `enforcement` | `SandboxPolicy.landlock`, `NetworkEndpoint.enforcement` | landlock equal to the baseline, and every endpoint `ENFORCE`: an audited or unset endpoint is refused (`CONSTRAINT_POLICY_BASELINE`) |
-| `must_equal`: `user_namespaces`, `driver`, `runtime` | `SandboxTemplate.user_namespaces`, `.driver_config`, `.runtime_class_name` | never set by the adapter, never reachable by a policy change; a resulting desk carrying any of them, or resources, answers `unknown` |
+| `must_equal`: `user_namespaces`, `driver`, `runtime` | `SandboxTemplate.user_namespaces`, `.driver_config`, `.runtime_class_name` | never set by the adapter, never reachable by a policy change; a resulting desk carrying any of them answers `unknown` |
 | programs (every rule's `binaries`) | `NetworkBinary.path` | a change names only programs the baseline named, and leaves no rule without programs (which NVIDIA OpenShell reads as any program) unless the baseline had one (`CONSTRAINT_POLICY_BASELINE`) |
 | (no desks.v1 name: a fixed rule) | `NetworkEndpoint.credential_binding`, `allow_uninspected_credentials`, `provider_credentialed`, `credential_signing`, `signing_service`, `signing_region`, `token_grant_owner`, `*_credential_rewrite` | a policy change never adds, changes or moves an endpoint carrying a provider's credentials: each one is kept exactly as the creation policy has it (same rule, same programs), or dropped. Changing where a provider's credentials reach is a provider change, made at install, never a policy change (`CONSTRAINT_CREDENTIAL_ENDPOINT`) |
 | `providers` | `SandboxSpec.providers` | a create's providers are listed (`CONSTRAINT_PROVIDERS`) |
 | `environment_keys` | `SandboxSpec.environment` | every key is listed (`CONSTRAINT_ENVIRONMENT_KEYS`) |
+| `resources` (`max_cpu_millicores`, `max_memory_mib`) | `SandboxTemplate.resources` `limits.cpu`, `limits.memory` | a create's CPU and memory limit is at most each value; a grant without `resources` allows no create (`CONSTRAINT_RESOURCES`, contracts 0.86.0) |
 | `repo_hosts` | (none) | unused since contracts 0.65.0: a create carries no `repo` (refused `FIELD_NOT_ALLOWED`); repositories reach a desk through a setup plan |
 
 After the backend answers, the desk it reports is compared with the request
-(image, providers, policy digest, no template fields the adapter never sets);
-a difference answers `unknown`.
+(image, providers, policy digest, CPU and memory limit, no template fields the
+adapter never sets); a difference answers `unknown`.
+
+## A desk's CPU and memory limit
+
+Every create carries one (contracts 0.86.0): `cpu_millicores`, thousandths of
+one CPU, and `memory_mib`, mebibytes, both whole numbers. A create with none,
+or with one outside the contract's bounds, is refused `REQUEST_INVALID`; one
+above the grant's `resources`, or under a grant with no `resources`, is refused
+`CONSTRAINT_RESOURCES`. Both before the desk backend is called.
+
+The adapter sends the limit as the template's `resources`, limits only:
+`{"limits": {"cpu": "<cpu_millicores>m", "memory": "<memory_mib>Mi"}}`.
+NVIDIA OpenShell v0.1.9's Docker driver applies those two values as the desk
+container's CPU quota and memory limit, and refuses a request, so none is
+sent. A create answers `ready` only when the desk backend's own record of the
+desk carries exactly that limit and nothing beside it; else `unknown`. Each
+ready answer that reads a desk back carries the limit it read, as `resources`.
+A desk made before limits were required holds none, and reads as it always
+did: `status` and a `start` answer `ready` with no `resources`, and a create an
+older adapter recorded without a limit settles as before. Such a desk gets a
+limit when it is recreated. A desk that holds a limit the contract cannot
+state is never answered `ready`: its `status` and a `start` answer `unknown`. The limit is read back with exact arithmetic, in any spelling
+NVIDIA OpenShell reads the same way (`2`, `2000m` or `1.5000` CPUs; `4Gi`,
+`1.5Gi`, `4096Mi`, `4194304Ki`, the bytes, or a decimal unit that comes to
+whole MiB). Both values are JSON integers: `2000.0` is refused, in a create
+(`REQUEST_INVALID`) and in a grant (`CONSTRAINTS_INVALID`), never read through
+a float.
+
+That record is what the desk backend was asked to apply, not a reading of the
+kernel. The adapter has no access to the machine's control groups. The Enclave,
+which runs on the same machine, reads the desk's own `memory.max` and
+`cpu.max` and starts no work on a desk whose values differ from it. The limit
+leaves out swap: the desk backend sets none, so on a machine with swap Docker
+lets a desk use as much swap as its memory limit.
 
 ## What each operation does on the desk backend
 
@@ -195,7 +229,7 @@ The release is OWED from the moment the answer is written: the record names it i
 
 | Operation | NVIDIA OpenShell calls | Answer |
 |---|---|---|
-| `create` | CreateSandbox, then GetSandbox, GetSandboxPolicyStatus and each provider again | `backend_id`, `resource_version`, `policy_digest`, `providers`; `ready` only when the LOADED policy is the approved one and each provider's configuration is still the one the grant pins, else `unknown` |
+| `create` | CreateSandbox, then GetSandbox, GetSandboxPolicyStatus and each provider again | `backend_id`, `resource_version`, `policy_digest`, `providers`, `resources`; `ready` only when the LOADED policy is the approved one, each provider's configuration is still the one the grant pins, and the desk holds exactly the CPU and memory limit asked, else `unknown` |
 | `delete` | GetSandbox, DeleteSandbox, then GetSandbox until NOT_FOUND | released with `{deleted: true, sandbox_id}` |
 | `stop`, `start` | StopSandbox or StartSandbox, then reads until the phase shows | the desk's facts |
 | `policy_set` | GetSandbox (the creation policy), UpdateConfig at `expected_resource_version`, then reads until the new revision is loaded | the new `policy_digest` and `resource_version` |

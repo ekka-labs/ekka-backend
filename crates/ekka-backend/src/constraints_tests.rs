@@ -161,13 +161,29 @@ fn the_mirror_is_the_vendored_schema() {
     let mut all: Vec<&str> = top.to_vec();
     all.push("discovery");
     all.push("projects");
+    all.push("resources");
     all.sort_unstable();
     assert_eq!(keys(&s["properties"]), all);
     assert_eq!(
         req(s),
         top,
-        "every top-level field but `discovery` and `projects` is required"
+        "every top-level field but `discovery`, `projects` and `resources` is required"
     );
+    // Contracts 0.86.0: the optional ceiling on one desk's CPU and memory, closed.
+    let rc = &s["properties"]["resources"];
+    let ceiling = ["max_cpu_millicores", "max_memory_mib"];
+    assert_eq!(keys(&rc["properties"]), ceiling);
+    assert_eq!(req(rc), ceiling);
+    assert_eq!(rc["additionalProperties"], false);
+    let rp = &rc["properties"];
+    for (k, range) in [
+        ("max_cpu_millicores", crate::resources::CPU_MILLICORES),
+        ("max_memory_mib", crate::resources::MEMORY_MIB),
+    ] {
+        assert_eq!(rp[k]["type"], "integer", "{k}");
+        assert_eq!(rp[k]["minimum"], *range.start(), "{k}");
+        assert_eq!(rp[k]["maximum"], *range.end(), "{k}");
+    }
     // Contracts 0.84.0: the optional project list, closed, at most eight.
     let pr = &s["properties"]["projects"];
     assert_eq!(pr["maxItems"], 8);
@@ -436,4 +452,53 @@ fn projects_are_held_to_the_schema_and_widen_nothing() {
     }
     check(&with(&|v| v["projects"] = json!([]))).unwrap();
     check(&sample()).unwrap();
+}
+
+/// Contracts 0.86.0: the grant's ceiling on one desk's CPU and memory is
+/// optional, closed, whole and inside the contract's bounds; never null.
+#[test]
+fn a_resource_ceiling_is_held_to_the_schema() {
+    let ok = sample();
+    assert_eq!(
+        ok["resources"],
+        json!({ "max_cpu_millicores": 4000, "max_memory_mib": 8192 })
+    );
+    check(&ok).unwrap();
+    let without = {
+        let mut g = ok.clone();
+        g.as_object_mut().unwrap().remove("resources");
+        g
+    };
+    check(&without).unwrap();
+    let with = |r: Value| {
+        let mut g = ok.clone();
+        g["resources"] = r;
+        g
+    };
+    for (why, g) in [
+        ("null", with(Value::Null)),
+        (
+            "an unknown key",
+            with(json!({ "max_cpu_millicores": 4000, "max_memory_mib": 8192, "max_desks": 3 })),
+        ),
+        ("no memory", with(json!({ "max_cpu_millicores": 4000 }))),
+        (
+            "a fraction",
+            with(json!({ "max_cpu_millicores": 4000.5, "max_memory_mib": 8192 })),
+        ),
+        (
+            "a quantity string",
+            with(json!({ "max_cpu_millicores": 4000, "max_memory_mib": "8Gi" })),
+        ),
+        (
+            "below a tenth of a CPU",
+            with(json!({ "max_cpu_millicores": 99, "max_memory_mib": 8192 })),
+        ),
+        (
+            "above 4 TiB",
+            with(json!({ "max_cpu_millicores": 4000, "max_memory_mib": 4_194_305 })),
+        ),
+    ] {
+        assert!(check(&g).is_err(), "{why}");
+    }
 }

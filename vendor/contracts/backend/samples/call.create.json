@@ -28,6 +28,10 @@
     ],
     "environment": {
       "TZ": "UTC"
+    },
+    "resources": {
+      "cpu_millicores": 2000,
+      "memory_mib": 4096
     }
   }
 }

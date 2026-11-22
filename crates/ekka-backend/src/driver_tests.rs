@@ -74,7 +74,8 @@ pub(crate) fn then(n: u64) -> Admitted {
 
 pub(crate) fn create_body(extra: Value) -> CreateBody {
     let mut b = json!({ "name": "code-desk", "image": IMAGE, "policy": policy(),
-                        "providers": ["github"], "environment": { "TZ": "UTC" } });
+                        "providers": ["github"], "environment": { "TZ": "UTC" },
+                        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } });
     if let (Some(o), Some(e)) = (b.as_object_mut(), extra.as_object()) {
         for (k, v) in e {
             o.insert(k.clone(), v.clone());
@@ -445,6 +446,63 @@ async fn a_stop_then_a_start_read_the_desk_back_each_time() {
     assert!(releases
         .iter()
         .all(|p| p["read_back"]["sandbox_id"] == FIRST_ID));
+}
+
+/// No flag day: a desk made before limits were required holds none, and it
+/// stops and starts ready as it always did, its answer with no `resources`.
+/// A desk that holds a limit this contract cannot state is never started
+/// ready: what it is held to cannot be told.
+#[tokio::test]
+async fn a_desk_with_no_limit_starts_as_before_and_an_unreadable_one_never_does() {
+    let held = |w: &World, r: Option<prost_types::Struct>| {
+        w.gw.lock()
+            .unwrap()
+            .sandboxes
+            .get_mut("code-desk")
+            .unwrap()
+            .spec
+            .as_mut()
+            .unwrap()
+            .template
+            .as_mut()
+            .unwrap()
+            .resources = r;
+    };
+    let w = world().await;
+    w.b.create(&admitted(), &create_body(json!({})), &crate::driver::Noted)
+        .await;
+    held(&w, None);
+    let stopped =
+        w.b.stop_or_start(&then(1), "code-desk", false, &crate::driver::Noted)
+            .await;
+    assert_eq!(stopped.outcome, AnswerOutcome::Ready, "{stopped:?}");
+    let started =
+        w.b.stop_or_start(&then(2), "code-desk", true, &crate::driver::Noted)
+            .await;
+    assert_eq!(started.outcome, AnswerOutcome::Ready, "{started:?}");
+    assert_eq!(started.desk.resources, None);
+
+    let w = world().await;
+    w.b.create(&admitted(), &create_body(json!({})), &crate::driver::Noted)
+        .await;
+    let mut odd = crate::resources::Resources {
+        cpu_millicores: 2000,
+        memory_mib: 4096,
+    }
+    .template();
+    odd.fields.insert(
+        "requests".into(),
+        prost_types::Value {
+            kind: Some(prost_types::value::Kind::StringValue("x".into())),
+        },
+    );
+    held(&w, Some(odd));
+    w.b.stop_or_start(&then(1), "code-desk", false, &crate::driver::Noted)
+        .await;
+    let started =
+        w.b.stop_or_start(&then(2), "code-desk", true, &crate::driver::Noted)
+            .await;
+    assert_eq!(started.outcome, AnswerOutcome::Unknown, "{started:?}");
 }
 
 fn policy_body(policy: Value, version: &str) -> PolicySetBody {

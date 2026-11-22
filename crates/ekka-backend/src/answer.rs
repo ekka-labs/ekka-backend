@@ -49,6 +49,9 @@ pub enum Code {
     ConstraintProviderConfigDigests,
     ConstraintEnvironmentKeys,
     ConstraintPolicyBaseline,
+    /// A create asks more CPU or memory than the grant's `resources`, or the
+    /// grant has none (contracts 0.86.0).
+    ConstraintResources,
     ConstraintCredentialEndpoint,
     FieldNotAllowed,
     OperationIdReused,
@@ -164,6 +167,10 @@ pub struct DeskFacts {
     pub providers_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub providers: Option<Vec<String>>,
+    /// The CPU and memory limit the backend holds for the desk, as read back
+    /// (contracts 0.86.0). The backend's record, not the kernel's values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<crate::resources::Resources>,
     /// `approval_mode` only: the mode the desk was read back in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_mode: Option<String>,

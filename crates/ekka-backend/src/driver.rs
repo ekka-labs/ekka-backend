@@ -256,6 +256,9 @@ impl Backend {
                     .map(|s| s.providers.clone())
                     .unwrap_or_default(),
             ),
+            // The backend's record of the limit, when it holds one this
+            // contract states; the kernel's values are the Enclave's to read.
+            resources: crate::resources::Held::of(&sb).limit(),
             ..DeskFacts::default()
         };
         Ok(Some((sb, facts)))
@@ -279,11 +282,18 @@ impl Backend {
             Err(answer) => return answer,
         };
         match self.facts(&bearer, name).await {
-            Ok(Some((_, mut facts))) => {
+            Ok(Some((sb, mut facts))) => {
                 let names = facts.providers.clone().unwrap_or_default();
                 facts.providers_digest = self.providers_digest(&bearer, &names).await;
                 if facts.policy_digest.is_none() || facts.providers_digest.is_none() {
                     // The desk exists, but what it enforces cannot be told now.
+                    return Answer::unknown();
+                }
+                if crate::resources::Held::of(&sb) == crate::resources::Held::Other {
+                    // A limit this contract cannot state: what the desk is
+                    // held to cannot be told. A desk made before limits were
+                    // required holds none and reads as it always did, with no
+                    // `resources`.
                     return Answer::unknown();
                 }
                 Answer::ready(facts)
@@ -723,6 +733,8 @@ impl Backend {
             spec: Some(SandboxSpec {
                 template: Some(SandboxTemplate {
                     image: body.image.clone(),
+                    // Limits only: NVIDIA OpenShell's Docker driver refuses a request.
+                    resources: body.resources.map(|r| r.template()),
                     ..Default::default()
                 }),
                 policy: Some(policy),
@@ -807,6 +819,7 @@ impl Backend {
             image: &body.image,
             policy: &body.policy,
             providers: &body.providers,
+            resources: body.resources,
         };
         self.finish(
             a,
@@ -1011,11 +1024,17 @@ impl Backend {
                 d.is_some_and(|(sb, _)| phase_is(sb, want))
             })
             .await;
+        // A start never readies a desk whose limit this contract cannot
+        // state. A desk made before limits were required holds none and
+        // starts as it always did.
         self.finish(
             a,
             name,
             read,
-            |sb, _| phase_is(sb, want),
+            |sb, _| {
+                phase_is(sb, want)
+                    && (!start || crate::resources::Held::of(sb) != crate::resources::Held::Other)
+            },
             false,
             bearer,
             send.is_none(),

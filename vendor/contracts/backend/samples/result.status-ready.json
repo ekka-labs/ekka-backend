@@ -8,5 +8,9 @@
   "providers": [
     "github"
   ],
+  "resources": {
+    "cpu_millicores": 2000,
+    "memory_mib": 4096
+  },
   "providers_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 }

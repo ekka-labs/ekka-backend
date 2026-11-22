@@ -7,5 +7,9 @@
   "policy_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "providers": [
     "github"
-  ]
+  ],
+  "resources": {
+    "cpu_millicores": 2000,
+    "memory_mib": 4096
+  }
 }
