@@ -378,7 +378,7 @@
         "cpu_millicores",
         "memory_mib"
       ],
-      "description": "A desk's CPU and memory limit, which the kernel enforces on the desk's sandbox. `cpu_millicores`: thousandths of one CPU, so 2000 is two CPUs; the backend applies it as the CPU quota (on Linux cgroup v2, `cpu.max` reads `<cpu_millicores x 100> 100000`). `memory_mib`: mebibytes; the backend applies it as the memory limit (`memory.max` reads `memory_mib x 1048576`). Whole numbers only, so a limit is read back exactly, never rounded.",
+      "description": "A desk's CPU and memory limit, which the kernel enforces on the desk's sandbox. `cpu_millicores`: thousandths of one CPU, so 2000 is two CPUs; the backend applies it as the CPU quota (on Linux cgroup v2, `cpu.max` reads `<cpu_millicores x 100> 100000`). `memory_mib`: mebibytes; the backend applies it as the memory limit (`memory.max` reads `memory_mib x 1048576`). Whole numbers only, so a limit is read back exactly, never rounded: written as JSON integers, such as `2000`. A JSON Schema validator also accepts `2000.0` as an integer, but the adapter refuses it as REQUEST_INVALID, because reading it through a float could round a fraction into a whole number.",
       "properties": {
         "cpu_millicores": {
           "type": "integer",

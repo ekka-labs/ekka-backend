@@ -138,7 +138,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["max_cpu_millicores", "max_memory_mib"],
-          "description": "The most CPU and memory one desk may be created with: a create's `resources` must be at most each value. OPTIONAL in this schema only so that a grant written before it stays valid for every other change; a create needs it, and the adapter refuses every create under a grant without it. Either refusal is CONSTRAINT_RESOURCES.",
+          "description": "The most CPU and memory one desk may be created with: a create's `resources` must be at most each value. Both are JSON integers, such as `4000`; the adapter refuses `4000.0` (CONSTRAINTS_INVALID), as it refuses it in a create. OPTIONAL in this schema only so that a grant written before it stays valid for every other change; a create needs it, and the adapter refuses every create under a grant without it. Either refusal is CONSTRAINT_RESOURCES.",
           "properties": {
             "max_cpu_millicores": {
               "type": "integer",

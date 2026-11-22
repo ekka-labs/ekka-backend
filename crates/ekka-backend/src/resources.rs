@@ -33,30 +33,8 @@ pub(crate) const MEMORY_MIB: RangeInclusive<u64> = 256..=4_194_304;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Resources {
-    #[serde(deserialize_with = "whole_number")]
     pub cpu_millicores: u64,
-    #[serde(deserialize_with = "whole_number")]
     pub memory_mib: u64,
-}
-
-/// A JSON number that is a whole number, as the contract's `integer` reads
-/// it: `2000` and `2000.0` alike. A fraction, a negative number or text is
-/// refused.
-fn whole_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-    let n = serde_json::Number::deserialize(d)?;
-    if let Some(u) = n.as_u64() {
-        return Ok(u);
-    }
-    // Whole numbers to 2^53 are exact in a float; the contract's largest
-    // value is far below that.
-    n.as_f64()
-        .filter(|f| f.fract() == 0.0 && (0.0..=9_007_199_254_740_992.0).contains(f))
-        .map(|f| {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let u = f as u64;
-            u
-        })
-        .ok_or_else(|| serde::de::Error::custom("not a whole number"))
 }
 
 /// The most one desk may ask (desks.v1 `resources`). Closed.
@@ -191,53 +169,53 @@ pub(crate) fn json(s: &prost_types::Struct) -> Value {
     )
 }
 
-/// Plain decimal digits, no sign, no fraction.
-fn whole(s: &str) -> Option<u64> {
-    (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| s.parse().ok())
+/// `<digits>` or `<digits>.<digits>` times `num / den`, when that is exactly
+/// a whole number; anything else (a sign, an exponent, a remainder) is `None`.
+fn exact(coefficient: &str, num: u128, den: u128) -> Option<u64> {
+    let (w, f) = coefficient.split_once('.').unwrap_or((coefficient, ""));
+    let digits = |t: &str| t.bytes().all(|b| b.is_ascii_digit());
+    if w.is_empty() || !digits(w) || !digits(f) || f.len() > 18 || coefficient.ends_with('.') {
+        return None;
+    }
+    let scale = 10u128.checked_pow(u32::try_from(f.len()).ok()?)?;
+    let value: u128 = format!("{w}{f}").parse().ok()?;
+    let top = value.checked_mul(num)?;
+    let bottom = scale.checked_mul(den)?;
+    (top % bottom == 0)
+        .then(|| u64::try_from(top / bottom).ok())
         .flatten()
 }
 
-/// A Kubernetes-style CPU quantity in thousandths of a CPU: `<n>m` or whole
-/// CPUs `<n>`. A fraction is not read.
+/// A Kubernetes-style CPU quantity in thousandths of a CPU: `<n>m`, or CPUs,
+/// whole or decimal, that come to whole millicores exactly (`1.5`, `1.5000`).
 fn millicores(s: &str) -> Option<u64> {
-    if let Some(m) = s.strip_suffix('m') {
-        return whole(m);
+    match s.strip_suffix('m') {
+        Some(m) => exact(m, 1, 1),
+        None => exact(s, 1000, 1),
     }
-    // CPUs, with at most three decimals: exactly whole millicores, as NVIDIA
-    // OpenShell reads `1.5`.
-    let (w, f) = s.split_once('.').unwrap_or((s, ""));
-    if f.len() > 3 || (s.contains('.') && f.is_empty()) {
-        return None;
-    }
-    let frac = if f.is_empty() {
-        0
-    } else {
-        whole(&format!("{f:0<3}"))?
-    };
-    whole(w)?.checked_mul(1000)?.checked_add(frac)
 }
 
-/// A Kubernetes-style memory quantity in whole MiB: `<n>Mi`, `<n>Gi`,
-/// `<n>Ti`, or `<n>Ki` or bytes `<n>` that are a whole MiB. Anything else is
-/// not read.
+/// A Kubernetes-style memory quantity in whole MiB, in any binary or decimal
+/// unit NVIDIA OpenShell reads (`4Gi`, `1.5Gi`, `4096Mi`, `4194304Ki`, bytes,
+/// or `M`, `G` and the like), when it comes to whole MiB exactly.
 fn mebibytes(s: &str) -> Option<u64> {
-    const MIB: u64 = 1024 * 1024;
-    if let Some(n) = s.strip_suffix("Mi") {
-        return whole(n);
+    const MIB: u128 = 1024 * 1024;
+    let units: [(&str, u128); 8] = [
+        ("Ki", 1024),
+        ("Mi", MIB),
+        ("Gi", MIB * 1024),
+        ("Ti", MIB * 1024 * 1024),
+        ("K", 1_000),
+        ("M", 1_000_000),
+        ("G", 1_000_000_000),
+        ("T", 1_000_000_000_000),
+    ];
+    for (suffix, bytes) in units {
+        if let Some(n) = s.strip_suffix(suffix) {
+            return exact(n, bytes, MIB);
+        }
     }
-    if let Some(n) = s.strip_suffix("Ki") {
-        let kib = whole(n)?;
-        return (kib % 1024 == 0).then_some(kib / 1024);
-    }
-    if let Some(n) = s.strip_suffix("Gi") {
-        return whole(n)?.checked_mul(1024);
-    }
-    if let Some(n) = s.strip_suffix("Ti") {
-        return whole(n)?.checked_mul(1024 * 1024);
-    }
-    let bytes = whole(s)?;
-    (bytes % MIB == 0).then_some(bytes / MIB)
+    exact(s, 1, MIB)
 }
 
 #[cfg(test)]

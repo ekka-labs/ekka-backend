@@ -161,21 +161,51 @@ fn the_bounds_are_the_contracts() {
     .in_bounds());
 }
 
-/// The contract's `integer` is a JSON number that is whole, so `2000.0` is
-/// read as 2000; a fraction or text is refused, never rounded.
+/// A limit is a JSON integer: `2000.0` is refused like a fraction, never
+/// read through a float, where a long fraction could round to a whole number.
 #[test]
-fn a_whole_number_is_read_in_either_json_spelling() {
+fn a_limit_is_a_json_integer_never_a_float() {
     let r: Resources =
-        serde_json::from_value(json!({ "cpu_millicores": 2000.0, "memory_mib": 4096 })).unwrap();
+        serde_json::from_str(r#"{ "cpu_millicores": 2000, "memory_mib": 4096 }"#).unwrap();
     assert_eq!(r, ASKED);
     for bad in [
-        json!({ "cpu_millicores": 1500.5, "memory_mib": 4096 }),
-        json!({ "cpu_millicores": -2000, "memory_mib": 4096 }),
-        json!({ "cpu_millicores": "2000", "memory_mib": 4096 }),
+        r#"{ "cpu_millicores": 2000.0, "memory_mib": 4096 }"#,
+        r#"{ "cpu_millicores": 2000, "memory_mib": 255.999999999999999999 }"#,
+        r#"{ "cpu_millicores": -2000, "memory_mib": 4096 }"#,
+        r#"{ "cpu_millicores": "2000", "memory_mib": 4096 }"#,
     ] {
-        assert!(
-            serde_json::from_value::<Resources>(bad.clone()).is_err(),
-            "{bad}"
+        assert!(serde_json::from_str::<Resources>(bad).is_err(), "{bad}");
+    }
+}
+
+/// Every exact spelling NVIDIA OpenShell reads the same way is read; a value
+/// that is not whole millicores or whole MiB is not.
+#[test]
+fn quantities_are_read_with_exact_arithmetic() {
+    let limit =
+        |cpu: &str, memory: &str| held(json!({ "limits": { "cpu": cpu, "memory": memory } }));
+    for (cpu, memory, want) in [
+        ("1.5000", "1.5Gi", (1500, 1536)),
+        ("1500m", "0.5Gi", (1500, 512)),
+        ("1500.0m", "1610612736", (1500, 1536)),
+        ("2", "4294.967296M", (2000, 4096)),
+    ] {
+        assert_eq!(
+            limit(cpu, memory),
+            Held::Limit(Resources {
+                cpu_millicores: want.0,
+                memory_mib: want.1
+            }),
+            "{cpu} {memory}"
         );
+    }
+    for (cpu, memory) in [
+        ("1.5005", "4Gi"),
+        ("2", "1.0000001Gi"),
+        ("2", "4G"),
+        ("2e3m", "4Gi"),
+        ("2", "4.Gi"),
+    ] {
+        assert_eq!(limit(cpu, memory), Held::Other, "{cpu} {memory}");
     }
 }

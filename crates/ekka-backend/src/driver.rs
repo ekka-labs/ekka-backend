@@ -1031,11 +1031,14 @@ impl Backend {
                 d.is_some_and(|(sb, _)| phase_is(sb, want))
             })
             .await;
+        // A start finishes ready only for a desk that holds a CPU and memory
+        // limit this contract states: a desk made before limits were required
+        // is never readied, and is replaced. Stop and delete stay open to it.
         self.finish(
             a,
             name,
             read,
-            |sb, _| phase_is(sb, want),
+            |sb, facts| phase_is(sb, want) && (!start || facts.resources.is_some()),
             false,
             bearer,
             send.is_none(),

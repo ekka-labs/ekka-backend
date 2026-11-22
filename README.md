@@ -195,11 +195,16 @@ sent. A create answers `ready` only when the desk backend's own record of the
 desk carries exactly that limit and nothing beside it; else `unknown`. Each
 ready answer that reads a desk back carries the limit it read, as `resources`.
 A desk that holds no limit, or one the contract cannot state, is never
-answered `ready`: its `status` answers `unknown`, and a create an older adapter
-recorded without a limit settles `unknown`. Such a desk is replaced, not
-migrated. The limit is read back exactly, in any spelling NVIDIA OpenShell
-reads the same way (`2`, `2000m` or `2.000` CPUs; `4Gi`, `4096Mi`,
-`4194304Ki` or the bytes).
+answered `ready`: its `status` and a `start` of it answer `unknown` (a stop and
+a delete still work). A create an older adapter recorded without a limit
+stays `running` and held, as any unfinished change, and its read-back after a
+settle marker answers `unknown`. Such a desk is replaced,
+not migrated. The limit is read back with exact arithmetic, in any spelling
+NVIDIA OpenShell reads the same way (`2`, `2000m` or `1.5000` CPUs; `4Gi`,
+`1.5Gi`, `4096Mi`, `4194304Ki`, the bytes, or a decimal unit that comes to
+whole MiB). Both values are JSON integers: `2000.0` is refused, in a create
+(`REQUEST_INVALID`) and in a grant (`CONSTRAINTS_INVALID`), never read through
+a float.
 
 That record is what the desk backend was asked to apply, not a reading of the
 kernel. The adapter has no access to the machine's control groups. The Enclave,
