@@ -25,6 +25,8 @@
 //! change that completed but whose desk does not match answers `unknown`.
 //! Reads (`status`, `policy_get`, `discovery_evidence`) take no claim.
 
+pub(crate) mod provider_connect;
+
 use openshell_proto::openshell::sandbox::v1::SandboxPolicy;
 use openshell_proto::openshell::v1::{
     CreateSandboxRequest, Sandbox, SandboxPhase, SandboxSpec, SandboxTemplate,

@@ -290,7 +290,11 @@ async fn dispatch(
         }
         Operation::DiscoveryEvidence => b.discovery_evidence(a, desk).await,
         Operation::GrantFacts => b.grant_facts(a).await,
-        // Reserved in v1: providers are set at install.
-        Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
+        Operation::ProviderConnect => {
+            match enforce::body::<crate::driver::provider_connect::ConnectBody>(body) {
+                Ok(p) => b.connect_provider(a, &p, notes).await,
+                Err(code) => Answer::refused(code),
+            }
+        }
     }
 }

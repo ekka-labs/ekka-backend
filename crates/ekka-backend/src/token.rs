@@ -256,6 +256,8 @@ pub struct Verified {
     /// The call's backend credential, for this call only. Read by the
     /// driver.
     pub credential: Credential,
+    /// Provider material for this call only, never included in durable state.
+    pub provider_credentials: Option<crate::provider_credentials::Material>,
     /// The ORIGINAL `X-EKKA-Gate-Token` header as it arrived, for the durable
     /// record, which re-checks it with [`Verifier::verify_stored`].
     /// A signed authorization pinned to this operation, not a credential.
@@ -333,6 +335,7 @@ impl Verified {
             request_id: "00000000-0000-5000-8000-000000000000".into(),
             grant,
             credential: Credential(zeroize::Zeroizing::new("backend-credential".into())),
+            provider_credentials: None,
             gate_token: String::new(),
             expires: Utc::now() + Duration::minutes(5),
             replay: Arc::new(Replay {
@@ -371,6 +374,7 @@ impl Admitted {
                 request_id: request_id.to_string(),
                 grant: None,
                 credential,
+                provider_credentials: None,
                 gate_token: String::new(),
                 expires: Utc::now(),
                 replay: Arc::new(Replay {
@@ -403,6 +407,7 @@ impl Admitted {
                 request_id: request_id.to_string(),
                 grant: r.grant,
                 credential,
+                provider_credentials: None,
                 gate_token: gate_token.to_string(),
                 expires: Utc::now(),
                 replay: Arc::new(Replay {
@@ -619,6 +624,7 @@ impl Verifier {
             ),
             grant: t.grant,
             credential: Credential(zeroize::Zeroizing::new(bearer.to_string())),
+            provider_credentials: None,
             gate_token: header.to_string(),
             expires: t.expires,
             replay: self.replay.clone(),

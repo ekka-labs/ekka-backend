@@ -9,6 +9,8 @@
 //! Its message is never kept, because the contract forwards no backend text,
 //! and never matched, because it is prose.
 
+mod provider_write;
+
 use std::time::Duration;
 
 use openshell_proto::openshell::datamodel::v1::{workspace_selector, Provider, WorkspaceSelector};

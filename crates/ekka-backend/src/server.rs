@@ -129,9 +129,6 @@ async fn answer_route(
     else {
         return Answer::refused(Code::RequestInvalid);
     };
-    if r.operation == Operation::ProviderConnect {
-        return Answer::refused(Code::NotAvailable);
-    }
     let body = collected.to_bytes();
     let header = |name: &str| parts.headers.get(name).and_then(|v| v.to_str().ok());
     let call = Call {
@@ -142,10 +139,25 @@ async fn answer_route(
         backend_contract: header("x-ekka-backend-contract"),
         body: &body,
     };
-    let verified = match verifier.verify(&call) {
+    let mut verified = match verifier.verify(&call) {
         Ok(v) => v,
         Err(code) => return Answer::refused(code),
     };
+    // Secret transport is parsed only after signature, scope, grant and body
+    // pin verification. Other routes never accept it, even on a valid token.
+    let material = crate::provider_credentials::HEADER;
+    if r.operation == Operation::ProviderConnect {
+        if parts.headers.get_all(material).iter().count() != 1 {
+            return Answer::refused(Code::CredentialMissing);
+        }
+        verified.provider_credentials =
+            match crate::provider_credentials::Material::parse(header(material)) {
+                Ok(m) => Some(m),
+                Err(code) => return Answer::refused(code),
+            };
+    } else if parts.headers.contains_key(material) {
+        return Answer::refused(Code::FieldNotAllowed);
+    }
     tracing::info!(
         operation = r.operation.name(),
         operation_id = %verified.operation_id,
