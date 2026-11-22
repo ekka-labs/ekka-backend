@@ -137,6 +137,19 @@ impl Held {
         }
     }
 
+    /// What the backend holds for a desk it answered: its spec's template
+    /// `resources`.
+    pub(crate) fn of(sb: &openshell_proto::openshell::v1::Sandbox) -> Self {
+        Self::read(
+            sb.spec
+                .as_ref()
+                .and_then(|s| s.template.as_ref())
+                .and_then(|t| t.resources.as_ref())
+                .map(json)
+                .as_ref(),
+        )
+    }
+
     /// The limit, when the backend holds one this contract states.
     pub(crate) fn limit(self) -> Option<Resources> {
         match self {

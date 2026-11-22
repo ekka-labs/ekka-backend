@@ -194,12 +194,11 @@ container's CPU quota and memory limit, and refuses a request, so none is
 sent. A create answers `ready` only when the desk backend's own record of the
 desk carries exactly that limit and nothing beside it; else `unknown`. Each
 ready answer that reads a desk back carries the limit it read, as `resources`.
-A desk that holds no limit, or one the contract cannot state, is never
-answered `ready`: its `status` and a `start` of it answer `unknown` (a stop and
-a delete still work). A create an older adapter recorded without a limit
-stays `running` and held, as any unfinished change, and its read-back after a
-settle marker answers `unknown`. Such a desk is replaced,
-not migrated. The limit is read back with exact arithmetic, in any spelling
+A desk made before limits were required holds none, and reads as it always
+did: `status` and a `start` answer `ready` with no `resources`, and a create an
+older adapter recorded without a limit settles as before. Such a desk gets a
+limit when it is recreated. A desk that holds a limit the contract cannot
+state is never answered `ready`: its `status` and a `start` answer `unknown`. The limit is read back with exact arithmetic, in any spelling
 NVIDIA OpenShell reads the same way (`2`, `2000m` or `1.5000` CPUs; `4Gi`,
 `1.5Gi`, `4096Mi`, `4194304Ki`, the bytes, or a decimal unit that comes to
 whole MiB). Both values are JSON integers: `2000.0` is refused, in a create

@@ -552,8 +552,8 @@ fn a_resulting_desk_that_differs_from_the_request_does_not_match() {
         plant(&mut s);
         assert!(!result_matches(&e, &s), "{why}");
     }
-    // An operation an older adapter recorded asked no limit: its desk is
-    // never answered ready, with a limit or without one.
+    // An operation an older adapter recorded asked no limit: its desk must
+    // hold none, as it always did.
     let legacy = Expected {
         resources: None,
         ..e
@@ -564,7 +564,7 @@ fn a_resulting_desk_that_differs_from_the_request_does_not_match() {
         .unwrap()
         .remove("resources");
     assert!(
-        !result_matches(&legacy, &bare),
+        result_matches(&legacy, &bare),
         "a legacy create with no limit"
     );
     assert!(

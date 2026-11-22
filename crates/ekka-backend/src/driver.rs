@@ -258,15 +258,7 @@ impl Backend {
             ),
             // The backend's record of the limit, when it holds one this
             // contract states; the kernel's values are the Enclave's to read.
-            resources: crate::resources::Held::read(
-                sb.spec
-                    .as_ref()
-                    .and_then(|s| s.template.as_ref())
-                    .and_then(|t| t.resources.as_ref())
-                    .map(crate::resources::json)
-                    .as_ref(),
-            )
-            .limit(),
+            resources: crate::resources::Held::of(&sb).limit(),
             ..DeskFacts::default()
         };
         Ok(Some((sb, facts)))
@@ -290,17 +282,18 @@ impl Backend {
             Err(answer) => return answer,
         };
         match self.facts(&bearer, name).await {
-            Ok(Some((_, mut facts))) => {
+            Ok(Some((sb, mut facts))) => {
                 let names = facts.providers.clone().unwrap_or_default();
                 facts.providers_digest = self.providers_digest(&bearer, &names).await;
                 if facts.policy_digest.is_none() || facts.providers_digest.is_none() {
                     // The desk exists, but what it enforces cannot be told now.
                     return Answer::unknown();
                 }
-                if facts.resources.is_none() {
-                    // A desk with no CPU and memory limit (one made before
-                    // limits were required), or one this contract cannot
-                    // state, is never ready: it is replaced.
+                if crate::resources::Held::of(&sb) == crate::resources::Held::Other {
+                    // A limit this contract cannot state: what the desk is
+                    // held to cannot be told. A desk made before limits were
+                    // required holds none and reads as it always did, with no
+                    // `resources`.
                     return Answer::unknown();
                 }
                 Answer::ready(facts)
@@ -1031,14 +1024,17 @@ impl Backend {
                 d.is_some_and(|(sb, _)| phase_is(sb, want))
             })
             .await;
-        // A start finishes ready only for a desk that holds a CPU and memory
-        // limit this contract states: a desk made before limits were required
-        // is never readied, and is replaced. Stop and delete stay open to it.
+        // A start never readies a desk whose limit this contract cannot
+        // state. A desk made before limits were required holds none and
+        // starts as it always did.
         self.finish(
             a,
             name,
             read,
-            |sb, facts| phase_is(sb, want) && (!start || facts.resources.is_some()),
+            |sb, _| {
+                phase_is(sb, want)
+                    && (!start || crate::resources::Held::of(sb) != crate::resources::Held::Other)
+            },
             false,
             bearer,
             send.is_none(),
