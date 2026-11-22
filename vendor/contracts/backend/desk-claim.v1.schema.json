@@ -30,6 +30,18 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "description": "The change's operation: a lowercase hyphenated UUID, the backend's request id."
     },
+    "operation": {
+      "enum": [
+        "create",
+        "delete",
+        "stop",
+        "start",
+        "policy_set",
+        "provider_detach",
+        "approval_mode"
+      ],
+      "description": "The change the claim is for, by its name in the adapter contract's operations.json: one of the operations that change one desk (`mutates` true, on a `/v1/desks` route). Optional: a claim without it is valid and is served as before. A `ready` release, with a live read-back, of a claim for `create` tells the Enclave the desk was just made, so a job sent right after the create waits while the new desk registers instead of being refused DESK_NOT_CONFIGURED."
+    },
     "outcome": {
       "enum": [
         "ready",
@@ -84,6 +96,9 @@
             },
             "operation_id": {
               "$ref": "#/$defs/operation_id"
+            },
+            "operation": {
+              "$ref": "#/$defs/operation"
             }
           }
         }
