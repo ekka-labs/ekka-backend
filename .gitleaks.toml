@@ -28,3 +28,10 @@ description = "The log redaction tests: each value is a made-up example in the s
 paths = [
   '''^crates/ekka-backend/src/redact_tests\.rs$''',
 ]
+
+[[allowlists]]
+description = "The provider connection test's fixed one-use reference UUID, not a credential value"
+condition = "AND"
+paths = ['''^crates/ekka-backend/tests/conformance/provider_connections\.rs$''']
+regexTarget = "secret"
+regexes = ['''^36c7c8fe-80d7-4410-8e39-c483cad8bd76$''']
