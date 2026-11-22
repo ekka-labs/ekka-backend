@@ -33,8 +33,30 @@ pub(crate) const MEMORY_MIB: RangeInclusive<u64> = 256..=4_194_304;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Resources {
+    #[serde(deserialize_with = "whole_number")]
     pub cpu_millicores: u64,
+    #[serde(deserialize_with = "whole_number")]
     pub memory_mib: u64,
+}
+
+/// A JSON number that is a whole number, as the contract's `integer` reads
+/// it: `2000` and `2000.0` alike. A fraction, a negative number or text is
+/// refused.
+fn whole_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    let n = serde_json::Number::deserialize(d)?;
+    if let Some(u) = n.as_u64() {
+        return Ok(u);
+    }
+    // Whole numbers to 2^53 are exact in a float; the contract's largest
+    // value is far below that.
+    n.as_f64()
+        .filter(|f| f.fract() == 0.0 && (0.0..=9_007_199_254_740_992.0).contains(f))
+        .map(|f| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let u = f as u64;
+            u
+        })
+        .ok_or_else(|| serde::de::Error::custom("not a whole number"))
 }
 
 /// The most one desk may ask (desks.v1 `resources`). Closed.
@@ -179,18 +201,34 @@ fn whole(s: &str) -> Option<u64> {
 /// A Kubernetes-style CPU quantity in thousandths of a CPU: `<n>m` or whole
 /// CPUs `<n>`. A fraction is not read.
 fn millicores(s: &str) -> Option<u64> {
-    match s.strip_suffix('m') {
-        Some(m) => whole(m),
-        None => whole(s)?.checked_mul(1000),
+    if let Some(m) = s.strip_suffix('m') {
+        return whole(m);
     }
+    // CPUs, with at most three decimals: exactly whole millicores, as NVIDIA
+    // OpenShell reads `1.5`.
+    let (w, f) = s.split_once('.').unwrap_or((s, ""));
+    if f.len() > 3 || (s.contains('.') && f.is_empty()) {
+        return None;
+    }
+    let frac = if f.is_empty() {
+        0
+    } else {
+        whole(&format!("{f:0<3}"))?
+    };
+    whole(w)?.checked_mul(1000)?.checked_add(frac)
 }
 
 /// A Kubernetes-style memory quantity in whole MiB: `<n>Mi`, `<n>Gi`,
-/// `<n>Ti`, or bytes `<n>` that are a whole MiB. Anything else is not read.
+/// `<n>Ti`, or `<n>Ki` or bytes `<n>` that are a whole MiB. Anything else is
+/// not read.
 fn mebibytes(s: &str) -> Option<u64> {
     const MIB: u64 = 1024 * 1024;
     if let Some(n) = s.strip_suffix("Mi") {
         return whole(n);
+    }
+    if let Some(n) = s.strip_suffix("Ki") {
+        let kib = whole(n)?;
+        return (kib % 1024 == 0).then_some(kib / 1024);
     }
     if let Some(n) = s.strip_suffix("Gi") {
         return whole(n)?.checked_mul(1024);

@@ -212,6 +212,18 @@ async fn a_desk_the_backend_holds_with_another_limit_is_unknown() {
         assert!(r.body.get("resources").is_none(), "{why}: {r:?}");
         let calls = h.enclave_calls();
         assert_eq!(calls.last().unwrap().1["outcome"], "unknown", "{why}");
+        // A later status reports the limit the backend holds, and a desk
+        // holding none, or one the contract cannot state, is never ready.
+        let st = h.status().await;
+        if why == "more memory" {
+            st.assert_ready();
+            assert_eq!(
+                st.body["resources"],
+                json!({ "cpu_millicores": 2000, "memory_mib": 8192 })
+            );
+        } else {
+            assert_eq!(st.outcome(), "unknown", "{why}: {st:?}");
+        }
         h.assert_no_secret_shown();
     }
 }

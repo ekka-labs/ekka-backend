@@ -39,15 +39,31 @@ fn the_backends_record_is_read_exactly_or_not_at_all() {
             json!({ "limits": { "cpu": "2000m", "memory": "4294967296" } }),
             "bytes",
         ),
+        (
+            json!({ "limits": { "cpu": "2.000", "memory": "4194304Ki" } }),
+            "decimal CPUs and KiB",
+        ),
     ] {
         assert_eq!(held(spelled), Held::Limit(ASKED), "{why}");
     }
+    assert_eq!(
+        held(json!({ "limits": { "cpu": "1.5", "memory": "4096Mi" } })),
+        Held::Limit(Resources {
+            cpu_millicores: 1500,
+            memory_mib: 4096
+        }),
+        "a CPU and a half is exactly 1500 millicores"
+    );
     assert_eq!(Held::read(None), Held::None);
     assert_eq!(Held::read(Some(&Value::Null)), Held::None);
     for (v, why) in [
         (
-            json!({ "limits": { "cpu": "1.5", "memory": "4096Mi" } }),
-            "a fraction of a CPU",
+            json!({ "limits": { "cpu": "1.2345", "memory": "4096Mi" } }),
+            "finer than a millicore",
+        ),
+        (
+            json!({ "limits": { "cpu": "2000m", "memory": "1536Ki" } }),
+            "KiB that are not a whole MiB",
         ),
         (
             json!({ "limits": { "cpu": "2000m", "memory": "4G" } }),
@@ -143,4 +159,23 @@ fn the_bounds_are_the_contracts() {
         memory_mib: 4_194_305
     }
     .in_bounds());
+}
+
+/// The contract's `integer` is a JSON number that is whole, so `2000.0` is
+/// read as 2000; a fraction or text is refused, never rounded.
+#[test]
+fn a_whole_number_is_read_in_either_json_spelling() {
+    let r: Resources =
+        serde_json::from_value(json!({ "cpu_millicores": 2000.0, "memory_mib": 4096 })).unwrap();
+    assert_eq!(r, ASKED);
+    for bad in [
+        json!({ "cpu_millicores": 1500.5, "memory_mib": 4096 }),
+        json!({ "cpu_millicores": -2000, "memory_mib": 4096 }),
+        json!({ "cpu_millicores": "2000", "memory_mib": 4096 }),
+    ] {
+        assert!(
+            serde_json::from_value::<Resources>(bad.clone()).is_err(),
+            "{bad}"
+        );
+    }
 }

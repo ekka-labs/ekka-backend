@@ -466,7 +466,7 @@ pub(crate) struct Expected<'a> {
     pub policy: &'a Value,
     pub providers: &'a [String],
     /// The limit asked; `None` only for an operation an older adapter
-    /// recorded, whose desk must then hold none.
+    /// recorded, which never matches: that desk is replaced, never readied.
     pub resources: Option<crate::resources::Resources>,
 }
 
@@ -502,7 +502,9 @@ pub(crate) fn result_matches(e: &Expected<'_>, sandbox: &Value) -> bool {
     let held = crate::resources::Held::read(template.get("resources"));
     let resources_ok = match e.resources {
         Some(r) => held == crate::resources::Held::Limit(r),
-        None => held == crate::resources::Held::None,
+        // An operation an older adapter recorded asked no limit: its desk is
+        // never answered ready, whatever it holds. It is replaced.
+        None => false,
     };
     image_ok && providers_ok && policy_ok && template_ok && resources_ok
 }

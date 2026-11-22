@@ -552,6 +552,25 @@ fn a_resulting_desk_that_differs_from_the_request_does_not_match() {
         plant(&mut s);
         assert!(!result_matches(&e, &s), "{why}");
     }
+    // An operation an older adapter recorded asked no limit: its desk is
+    // never answered ready, with a limit or without one.
+    let legacy = Expected {
+        resources: None,
+        ..e
+    };
+    let mut bare = made();
+    bare["spec"]["template"]
+        .as_object_mut()
+        .unwrap()
+        .remove("resources");
+    assert!(
+        !result_matches(&legacy, &bare),
+        "a legacy create with no limit"
+    );
+    assert!(
+        !result_matches(&legacy, &made()),
+        "a legacy create that holds one"
+    );
 }
 
 /// Contracts 0.65.0: the create's `repo` may only be absent or empty.

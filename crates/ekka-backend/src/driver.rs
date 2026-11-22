@@ -297,6 +297,12 @@ impl Backend {
                     // The desk exists, but what it enforces cannot be told now.
                     return Answer::unknown();
                 }
+                if facts.resources.is_none() {
+                    // A desk with no CPU and memory limit (one made before
+                    // limits were required), or one this contract cannot
+                    // state, is never ready: it is replaced.
+                    return Answer::unknown();
+                }
                 Answer::ready(facts)
             }
             Ok(None) => refused(Code::DeskNotFound),

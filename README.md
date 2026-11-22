@@ -194,6 +194,12 @@ container's CPU quota and memory limit, and refuses a request, so none is
 sent. A create answers `ready` only when the desk backend's own record of the
 desk carries exactly that limit and nothing beside it; else `unknown`. Each
 ready answer that reads a desk back carries the limit it read, as `resources`.
+A desk that holds no limit, or one the contract cannot state, is never
+answered `ready`: its `status` answers `unknown`, and a create an older adapter
+recorded without a limit settles `unknown`. Such a desk is replaced, not
+migrated. The limit is read back exactly, in any spelling NVIDIA OpenShell
+reads the same way (`2`, `2000m` or `2.000` CPUs; `4Gi`, `4096Mi`,
+`4194304Ki` or the bytes).
 
 That record is what the desk backend was asked to apply, not a reading of the
 kernel. The adapter has no access to the machine's control groups. The Enclave,
