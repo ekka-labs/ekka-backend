@@ -726,13 +726,9 @@ async fn manual_never_re_pins_the_desk_to_its_widened_policy() {
     assert!(w.enc.lock().unwrap().repins.is_empty());
 }
 
-/// Every change claims its desk naming the operation the adapter admitted,
-/// by its contract name (`desk-claim.v1` `operation`), so the Enclave can
-/// tell a create from any other change and wait for a desk it just made to
-/// register before a job runs on it. The changes that claim are exactly the
-/// vendored contract's operations that change one desk.
-#[tokio::test]
-async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
+/// Every change the adapter makes on one desk, each through its own call,
+/// all `ready`: the params of every claim it sent, in order.
+async fn claims_of_every_change() -> Vec<Value> {
     let w = world().await;
     let policy: crate::enforce::PolicySetBody = serde_json::from_value(
         json!({ "policy": crate::driver::tests::policy(), "expected_resource_version": "1" }),
@@ -762,15 +758,22 @@ async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
     for a in &answers {
         assert_eq!(a.outcome, Outcome::Ready, "{a:?}");
     }
-    let claims: Vec<Value> = w
-        .enc
-        .lock()
-        .unwrap()
-        .calls()
+    let calls = w.enc.lock().unwrap().calls();
+    calls
         .into_iter()
         .filter(|(m, _)| m == "runner_desk_claim")
         .map(|(_, p)| p)
-        .collect();
+        .collect()
+}
+
+/// Every change claims its desk naming the operation the adapter admitted,
+/// by its contract name (`desk-claim.v1` `operation`), so the Enclave can
+/// tell a create from any other change and wait for a desk it just made to
+/// register before a job runs on it. The changes that claim are exactly the
+/// vendored contract's operations that change one desk.
+#[tokio::test]
+async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
+    let claims = claims_of_every_change().await;
     let named: Vec<&str> = claims
         .iter()
         .map(|p| p["operation"].as_str().unwrap_or("(none)"))
@@ -815,4 +818,60 @@ async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
     seen.sort_unstable();
     seen.dedup();
     assert_eq!(seen, desk_changes);
+}
+
+/// Every claim the adapter sends is a claim request the vendored contract
+/// accepts: no param it does not name, every param it requires, and an
+/// `operation` from its closed list, which is exactly the list the adapter
+/// sends. Fails while the vendored contracts predate `operation`: vendor the
+/// release that defines it before this adapter ships.
+#[tokio::test]
+async fn every_claim_sent_is_the_vendored_contracts_claim_request() {
+    let s: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../vendor/contracts/backend/desk-claim.v1.schema.json"
+    )))
+    .unwrap();
+    let params = &s["$defs"]["claim_request"]["properties"]["params"];
+    assert_eq!(params["additionalProperties"], false);
+    let named = params["properties"].as_object().unwrap();
+    let required: Vec<&str> = params["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
+    let listed: Vec<&str> = s["$defs"]["operation"]["enum"]
+        .as_array()
+        .map(|l| l.iter().map(|o| o.as_str().unwrap()).collect())
+        .unwrap_or_default();
+    let claims = claims_of_every_change().await;
+    for p in &claims {
+        for k in p.as_object().unwrap().keys() {
+            assert!(
+                named.contains_key(k),
+                "the vendored desk-claim contract names no `{k}` param: {p}"
+            );
+        }
+        for r in &required {
+            assert!(p.get(*r).is_some(), "`{r}` is required: {p}");
+        }
+        assert_eq!(
+            params["properties"]["operation"]["$ref"],
+            "#/$defs/operation"
+        );
+        assert!(listed.contains(&p["operation"].as_str().unwrap()), "{p}");
+    }
+    let mut sent: Vec<&str> = claims
+        .iter()
+        .map(|p| p["operation"].as_str().unwrap())
+        .collect();
+    sent.sort_unstable();
+    sent.dedup();
+    let mut listed = listed;
+    listed.sort_unstable();
+    assert_eq!(
+        sent, listed,
+        "the contract lists exactly what the adapter sends"
+    );
 }
