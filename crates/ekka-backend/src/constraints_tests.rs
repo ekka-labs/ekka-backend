@@ -160,12 +160,30 @@ fn the_mirror_is_the_vendored_schema() {
     ];
     let mut all: Vec<&str> = top.to_vec();
     all.push("discovery");
+    all.push("projects");
     all.sort_unstable();
     assert_eq!(keys(&s["properties"]), all);
     assert_eq!(
         req(s),
         top,
-        "every top-level field but `discovery` is required"
+        "every top-level field but `discovery` and `projects` is required"
+    );
+    // Contracts 0.84.0: the optional project list, closed, at most eight.
+    let pr = &s["properties"]["projects"];
+    assert_eq!(pr["maxItems"], 8);
+    let item = ["image_id", "name", "policy_digest", "since"];
+    assert_eq!(keys(&pr["items"]["properties"]), item);
+    assert_eq!(req(&pr["items"]), item);
+    assert_eq!(pr["items"]["additionalProperties"], false);
+    assert_eq!(pr["type"], "array");
+    assert_eq!(pr["items"]["type"], "object");
+    let ip = &pr["items"]["properties"];
+    assert_eq!(ip["name"]["$ref"], "#/$defs/name");
+    assert_eq!(ip["image_id"]["$ref"], "#/$defs/digest");
+    assert_eq!(ip["policy_digest"]["$ref"], "#/$defs/digest");
+    assert_eq!(
+        ip["since"]["pattern"],
+        "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
     );
     // Contracts 0.76.0: the optional discovery window, closed.
     let d = &s["properties"]["discovery"];
@@ -340,4 +358,82 @@ fn a_follow_form_in_a_token_is_refused() {
     );
     let e = check(&follow).unwrap_err();
     assert!(e.starts_with("not desk grant limits (desks.v1)"), "{e}");
+}
+
+#[test]
+fn projects_are_held_to_the_schema_and_widen_nothing() {
+    let ok = vendored("samples/desks.v1.projects.json");
+    check(&ok).unwrap();
+    let first = ok["projects"][0].clone();
+    let with = |f: &dyn Fn(&mut Value)| {
+        let mut v = ok.clone();
+        f(&mut v);
+        v
+    };
+    let digest = |c: char| format!("sha256:{}", c.to_string().repeat(64));
+    let nine: Vec<Value> = (0..9)
+        .map(|i| {
+            let mut p = first.clone();
+            p["name"] = json!(format!("p{i}"));
+            p
+        })
+        .collect();
+    let planted: Vec<(&str, Value)> = vec![
+        (
+            "an unknown key",
+            with(&|v| v["projects"][0]["providers"] = json!(["github"])),
+        ),
+        (
+            "no since",
+            with(&|v| {
+                v["projects"][0].as_object_mut().unwrap().remove("since");
+            }),
+        ),
+        (
+            "nine projects",
+            with(&|v| v["projects"] = json!(nine.clone())),
+        ),
+        (
+            "an upper-case name",
+            with(&|v| v["projects"][0]["name"] = json!("Billing")),
+        ),
+        (
+            "a name twice",
+            with(&|v| {
+                let n = v["projects"][0]["name"].clone();
+                v["projects"][1]["name"] = n;
+            }),
+        ),
+        (
+            "an image outside image_digests",
+            with(&|v| v["projects"][0]["image_id"] = json!(digest('9'))),
+        ),
+        (
+            "a policy outside policy_digests",
+            with(&|v| v["projects"][0]["policy_digest"] = json!(digest('9'))),
+        ),
+        (
+            "a since with a fraction",
+            with(&|v| v["projects"][0]["since"] = json!("2026-11-19T09:00:00.5Z")),
+        ),
+        (
+            "a since not in UTC",
+            with(&|v| v["projects"][0]["since"] = json!("2026-11-19T09:00:00+01:00")),
+        ),
+        (
+            "30 February",
+            with(&|v| v["projects"][0]["since"] = json!("2026-02-30T09:00:00Z")),
+        ),
+        (
+            "a leap second",
+            with(&|v| v["projects"][0]["since"] = json!("2026-11-19T09:00:60Z")),
+        ),
+        ("projects null", with(&|v| v["projects"] = Value::Null)),
+        ("discovery null", with(&|v| v["discovery"] = Value::Null)),
+    ];
+    for (what, v) in planted {
+        assert!(check(&v).is_err(), "{what} must be refused");
+    }
+    check(&with(&|v| v["projects"] = json!([]))).unwrap();
+    check(&sample()).unwrap();
 }

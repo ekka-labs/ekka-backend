@@ -38,6 +38,21 @@ pub(crate) struct DeskConstraints {
     /// automatic approval of their network proposals. Absent means none may.
     #[serde(default)]
     pub discovery: Option<Discovery>,
+    /// The server's own projects, each a team's desk image and its own
+    /// reviewed policy. A project widens nothing by itself: its image and its
+    /// policy must already be in `image_digests` and `policy_digests`.
+    #[serde(default)]
+    pub projects: Option<Vec<Project>>,
+}
+
+/// One project in the grant (desks.v1 `projects`), closed.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Project {
+    pub name: String,
+    pub image_id: String,
+    pub policy_digest: String,
+    pub since: String,
 }
 
 /// The only name prefix a discovery window names (a constant of the schema).
@@ -113,6 +128,13 @@ pub(crate) struct Network {
 /// # Errors
 /// The first rule broken, naming the field.
 pub(crate) fn check(value: &Value) -> Result<(), String> {
+    // The two optional blocks are absent or present, never null: serde reads a
+    // null as absent, which would skip every check on them.
+    for k in ["discovery", "projects"] {
+        if value.get(k).is_some_and(Value::is_null) {
+            return Err(format!("{k} must be absent or present, never null"));
+        }
+    }
     let c: DeskConstraints = serde_json::from_value(value.clone())
         .map_err(|e| format!("not desk grant limits (desks.v1): {e}"))?;
     list("image_digests", &c.image_digests, 1, 32, is_digest)?;
@@ -194,6 +216,54 @@ pub(crate) fn check(value: &Value) -> Result<(), String> {
         }
         if d.ends().is_none() {
             return Err("discovery.expires_at must be an RFC 3339 time in UTC, ending in Z".into());
+        }
+    }
+    if let Some(projects) = &c.projects {
+        check_projects(projects, &c.image_digests, &c.policy_digests)?;
+    }
+    Ok(())
+}
+
+/// The schema's rules for `projects`, and the one it cannot state: a project
+/// widens nothing, so its image and policy are already in the grant's lists,
+/// and two entries never share a name.
+fn check_projects(
+    projects: &[Project],
+    images: &[String],
+    policies: &[String],
+) -> Result<(), String> {
+    if projects.len() > 8 {
+        return Err("projects must have 0 to 8 entries".into());
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for (i, p) in projects.iter().enumerate() {
+        let at = format!("projects[{i}]");
+        if !is_name(&p.name) {
+            return Err(format!(
+                "{at}.name: '{}' is not a name",
+                p.name.escape_debug()
+            ));
+        }
+        if !names.insert(p.name.as_str()) {
+            return Err(format!("{at}: project '{}' is named twice", p.name));
+        }
+        if !is_digest(&p.image_id) || !images.contains(&p.image_id) {
+            return Err(format!("{at}.image_id: not a digest in image_digests"));
+        }
+        if !is_digest(&p.policy_digest) || !policies.contains(&p.policy_digest) {
+            return Err(format!(
+                "{at}.policy_digest: not a digest in policy_digests"
+            ));
+        }
+        // To the second, seconds 00 to 59: the schema allows no fraction and no
+        // leap second, which the time parser would otherwise accept.
+        if p.since.len() != 20
+            || p.since.get(17..19).is_none_or(|s| s > "59")
+            || utc(&p.since).is_none()
+        {
+            return Err(format!(
+                "{at}.since must be a UTC time to the second, ending in Z"
+            ));
         }
     }
     Ok(())

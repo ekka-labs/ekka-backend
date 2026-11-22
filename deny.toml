@@ -8,6 +8,10 @@
 all-features = true
 
 [advisories]
+# chrono is unmaintained, with no fixed upgrade (RUSTSEC-2026-0543).
+# Temporarily accepted for this dependency only; all other advisories still fail.
+# Remove this exception when the date/time dependency is replaced.
+ignore = ["RUSTSEC-2026-0543"]
 yanked  = "deny"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 

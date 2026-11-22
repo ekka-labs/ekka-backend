@@ -1,0 +1,64 @@
+{
+  "image_digests": [
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  ],
+  "policy_digests": [
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  ],
+  "allowed_hosts": [
+    "api.github.com",
+    "*.githubusercontent.com"
+  ],
+  "providers": [
+    "github"
+  ],
+  "provider_config_digests": {
+    "github": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "environment_keys": [
+    "TZ"
+  ],
+  "repo_hosts": [
+    "github.com"
+  ],
+  "policy_baseline": {
+    "must_equal": [
+      "filesystem",
+      "process",
+      "user_namespaces",
+      "enforcement",
+      "driver",
+      "runtime"
+    ],
+    "network": {
+      "allowed_hosts": [
+        "api.github.com"
+      ],
+      "allowed_ports": [
+        443,
+        22
+      ],
+      "allowed_cidrs": [],
+      "provider_added": "listed_only"
+    }
+  },
+  "requires_role": "admin",
+  "projects": [
+    {
+      "name": "billing-api",
+      "image_id": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "policy_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "since": "2026-11-19T09:00:00Z"
+    },
+    {
+      "name": "web",
+      "image_id": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "policy_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "since": "2026-11-19T09:05:00Z"
+    }
+  ]
+}
