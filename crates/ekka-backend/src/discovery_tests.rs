@@ -845,6 +845,10 @@ async fn every_claim_sent_is_the_vendored_contracts_claim_request() {
     let request = &s["$defs"]["claim_request"];
     assert_eq!(request["additionalProperties"], false);
     let fields = request["properties"].as_object().unwrap();
+    // `jsonrpc` and `id` are read from their shared definitions: hold that
+    // the claim request still points at them.
+    assert_eq!(fields["jsonrpc"]["$ref"], "#/$defs/jsonrpc");
+    assert_eq!(fields["id"]["$ref"], "#/$defs/id");
     let id_types = names(&s["$defs"]["id"]["type"]);
     let params = &request["properties"]["params"];
     assert_eq!(params["additionalProperties"], false);
