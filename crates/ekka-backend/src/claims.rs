@@ -21,6 +21,8 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+use crate::routes::Operation;
+
 /// The Enclave's backend-link socket, in the shared socket folder.
 pub const ENCLAVE_SOCKET: &str = "enclave.sock";
 /// How long one call to the Enclave may take.
@@ -200,8 +202,10 @@ impl Claims {
             .ok_or_else(|| ClaimError::Unavailable(format!("{method}: no result")))
     }
 
-    /// Claim `desk` for the operation `request_id`. Returns the desk's
-    /// required providers when the Enclave names them (contracts 0.64.0).
+    /// Claim `desk` for the operation `request_id`, naming the change it is
+    /// for, `operation`, by its contract name: the Enclave tells a create
+    /// from any other change by it. Returns the desk's required providers
+    /// when the Enclave names them (contracts 0.64.0).
     ///
     /// # Errors
     /// The Enclave's refusal (`DESK_BUSY` …), or why it could not be asked.
@@ -209,11 +213,12 @@ impl Claims {
         &self,
         desk: &str,
         request_id: &str,
+        operation: Operation,
     ) -> Result<Option<Vec<String>>, ClaimError> {
         let r = self
             .call(
                 "runner_desk_claim",
-                json!({ "desk": desk, "operation_id": request_id }),
+                json!({ "desk": desk, "operation_id": request_id, "operation": operation.name() }),
             )
             .await?;
         if r.get("claimed") != Some(&json!(true)) {

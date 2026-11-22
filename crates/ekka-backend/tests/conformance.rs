@@ -888,7 +888,7 @@ async fn a_create_inside_its_grant_is_made_once_and_answers_ready() {
         calls[0],
         (
             "runner_desk_claim".to_string(),
-            json!({ "desk": DESK, "operation_id": rid })
+            json!({ "desk": DESK, "operation_id": rid, "operation": "create" })
         )
     );
     assert_eq!(calls[1].0, "runner_desk_release");
@@ -1090,6 +1090,14 @@ async fn a_stop_then_a_start_each_make_one_call_and_answer_ready() {
             ("StartSandbox".to_string(), start_rid)
         ]
     );
+    // Each claim names the change it is for, by the route that admitted it.
+    let claimed: Vec<Value> = h
+        .enclave_calls()
+        .into_iter()
+        .filter(|(m, _)| m == "runner_desk_claim")
+        .map(|(_, p)| p["operation"].clone())
+        .collect();
+    assert_eq!(claimed, [json!("create"), json!("stop"), json!("start")]);
     assert_eq!(h.held(), None);
     h.assert_no_secret_shown();
 }

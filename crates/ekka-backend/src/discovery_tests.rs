@@ -725,3 +725,94 @@ async fn manual_never_re_pins_the_desk_to_its_widened_policy() {
     assert_eq!(r.outcome, Outcome::Ready, "{r:?}");
     assert!(w.enc.lock().unwrap().repins.is_empty());
 }
+
+/// Every change claims its desk naming the operation the adapter admitted,
+/// by its contract name (`desk-claim.v1` `operation`), so the Enclave can
+/// tell a create from any other change and wait for a desk it just made to
+/// register before a job runs on it. The changes that claim are exactly the
+/// vendored contract's operations that change one desk.
+#[tokio::test]
+async fn every_change_claims_its_desk_naming_the_operation_it_admitted() {
+    let w = world().await;
+    let policy: crate::enforce::PolicySetBody = serde_json::from_value(
+        json!({ "policy": crate::driver::tests::policy(), "expected_resource_version": "1" }),
+    )
+    .unwrap();
+    let answers = [
+        w.b.create(
+            &as_op(&grant(), 1),
+            &create_body(json!({ "name": DESK })),
+            &Noted,
+        )
+        .await,
+        w.b.policy_set(&as_op(&grant(), 2), DESK, &policy, &Noted)
+            .await,
+        w.b.approval_mode(&as_op(&window_grant(120), 3), DESK, &mode("auto"), &Noted)
+            .await,
+        w.b.approval_mode(&as_op(&grant(), 4), DESK, &mode("manual"), &Noted)
+            .await,
+        w.b.detach(&as_op(&grant(), 5), DESK, "github", "2", &Noted)
+            .await,
+        w.b.stop_or_start(&as_op(&grant(), 6), DESK, false, &Noted)
+            .await,
+        w.b.stop_or_start(&as_op(&grant(), 7), DESK, true, &Noted)
+            .await,
+        w.b.delete(&as_op(&grant(), 8), DESK, &Noted).await,
+    ];
+    for a in &answers {
+        assert_eq!(a.outcome, Outcome::Ready, "{a:?}");
+    }
+    let claims: Vec<Value> = w
+        .enc
+        .lock()
+        .unwrap()
+        .calls()
+        .into_iter()
+        .filter(|(m, _)| m == "runner_desk_claim")
+        .map(|(_, p)| p)
+        .collect();
+    let named: Vec<&str> = claims
+        .iter()
+        .map(|p| p["operation"].as_str().unwrap_or("(none)"))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            "create",
+            "policy_set",
+            "approval_mode",
+            "approval_mode",
+            "provider_detach",
+            "stop",
+            "start",
+            "delete"
+        ]
+    );
+    for (n, p) in claims.iter().enumerate() {
+        let id = format!("00000000-0000-5000-8000-{:012}", n + 1);
+        assert_eq!(
+            p,
+            &json!({ "desk": DESK, "operation_id": id, "operation": named[n] }),
+            "each claim names its own change and nothing else"
+        );
+    }
+    // The changes that claim are exactly the contract's changes to one desk:
+    // mutating, on a /v1/desks route.
+    let ops: Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../vendor/contracts/backend/operations.json"
+    )))
+    .unwrap();
+    let mut desk_changes: Vec<&str> = ops["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["mutates"] == true && o["path"].as_str().unwrap().starts_with("/v1/desks"))
+        .map(|o| o["operation"].as_str().unwrap())
+        .collect();
+    desk_changes.sort_unstable();
+    let mut seen = named.clone();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen, desk_changes);
+}

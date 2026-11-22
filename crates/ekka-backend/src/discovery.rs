@@ -135,7 +135,10 @@ impl Backend {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        if let Err(answer) = self.claim(a, name).await {
+        if let Err(answer) = self
+            .claim(a, name, crate::routes::Operation::ApprovalMode)
+            .await
+        {
             return answer;
         }
         // The desk as the backend holds it now, read under the claim, so its
@@ -280,7 +283,10 @@ impl Backend {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        if let Err(answer) = self.claim(a, name).await {
+        if let Err(answer) = self
+            .claim(a, name, crate::routes::Operation::ApprovalMode)
+            .await
+        {
             return answer;
         }
         let id = match self.gateway.sandbox(&bearer, name).await {

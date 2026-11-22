@@ -308,10 +308,20 @@ impl Backend {
         }
     }
 
-    /// Claim the desk. `Ok` carries its required providers, `None` when the
-    /// Enclave did not name them (one older than contracts 0.64.0).
-    async fn claim(&self, a: &Admitted, desk: &str) -> Result<Option<Vec<String>>, Answer> {
-        match self.claims.claim(desk, &a.verified().request_id).await {
+    /// Claim the desk for `operation`, the change admitted. `Ok` carries its
+    /// required providers, `None` when the Enclave did not name them (one
+    /// older than contracts 0.64.0).
+    async fn claim(
+        &self,
+        a: &Admitted,
+        desk: &str,
+        operation: crate::routes::Operation,
+    ) -> Result<Option<Vec<String>>, Answer> {
+        match self
+            .claims
+            .claim(desk, &a.verified().request_id, operation)
+            .await
+        {
             Ok(required) => Ok(required),
             Err(ClaimError::Refused(code)) if code == "DESK_BUSY" => Err(refused(Code::DeskBusy)),
             Err(ClaimError::Refused(_)) => Err(refused(Code::BackendRefused)),
@@ -696,7 +706,10 @@ impl Backend {
                 return refused(Code::ConstraintProviderConfigDigests);
             }
         }
-        if let Err(answer) = self.claim(a, &body.name).await {
+        if let Err(answer) = self
+            .claim(a, &body.name, crate::routes::Operation::Create)
+            .await
+        {
             return answer;
         }
         self.create_send(a, &bearer, body, Some(policy), Some(notes))
@@ -887,7 +900,7 @@ impl Backend {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        if let Err(answer) = self.claim(a, name).await {
+        if let Err(answer) = self.claim(a, name, crate::routes::Operation::Delete).await {
             return answer;
         }
         let id = match self.gateway.sandbox(&bearer, name).await {
@@ -969,7 +982,12 @@ impl Backend {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        if let Err(answer) = self.claim(a, name).await {
+        let stop_or_start = if start {
+            crate::routes::Operation::Start
+        } else {
+            crate::routes::Operation::Stop
+        };
+        if let Err(answer) = self.claim(a, name, stop_or_start).await {
             return answer;
         }
         self.stop_or_start_send(a, &bearer, name, start, Some(notes))
@@ -1040,7 +1058,10 @@ impl Backend {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        if let Err(answer) = self.claim(a, name).await {
+        if let Err(answer) = self
+            .claim(a, name, crate::routes::Operation::PolicySet)
+            .await
+        {
             return answer;
         }
         // The baseline is the policy the desk was CREATED with: `spec.policy`,
@@ -1127,7 +1148,10 @@ impl Backend {
             Ok(b) => b,
             Err(answer) => return answer,
         };
-        let required = match self.claim(a, name).await {
+        let required = match self
+            .claim(a, name, crate::routes::Operation::ProviderDetach)
+            .await
+        {
             Ok(r) => r,
             Err(answer) => return answer,
         };

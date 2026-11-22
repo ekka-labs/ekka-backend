@@ -179,7 +179,7 @@ async fn a_create_inside_its_grant_is_made_claimed_and_released_with_its_read_ba
     assert_eq!(calls[0].0, "runner_desk_claim");
     assert_eq!(
         calls[0].1,
-        json!({ "desk": "code-desk", "operation_id": RID })
+        json!({ "desk": "code-desk", "operation_id": RID, "operation": "create" })
     );
     assert_eq!(calls[1].0, "runner_desk_release");
     assert_eq!(

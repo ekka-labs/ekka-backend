@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
 use super::{ClaimError, Claims, Outcome, ReadBack, ENCLAVE_SOCKET};
+use crate::routes::Operation;
 use crate::socket::tests::dir;
 
 const OP: &str = "228f680e-930e-56f2-9feb-1bc759da6615";
@@ -62,7 +63,7 @@ async fn a_claim_and_a_release_are_the_contracts_calls_beside_the_adapters_socke
         ok(json!({ "claimed": true, "released": "freed" })),
     );
     let c = Claims::beside(&d.path().join("backend.sock"), uid());
-    assert_eq!(c.claim("bench", OP).await.unwrap(), None);
+    assert_eq!(c.claim("bench", OP, Operation::Create).await.unwrap(), None);
     let rb = ReadBack::Live {
         sandbox_id: "s-1".into(),
         policy_digest: format!("sha256:{}", "a".repeat(64)),
@@ -78,7 +79,7 @@ async fn a_claim_and_a_release_are_the_contracts_calls_beside_the_adapters_socke
     assert_eq!(s[0]["method"], "runner_desk_claim");
     assert_eq!(
         s[0]["params"],
-        json!({ "desk": "bench", "operation_id": OP })
+        json!({ "desk": "bench", "operation_id": OP, "operation": "create" })
     );
     assert_eq!(s[1]["method"], "runner_desk_release");
     assert_eq!(
@@ -100,7 +101,7 @@ async fn a_deleted_read_back_and_the_required_providers_travel_as_the_contract_w
     );
     let c = Claims::beside(&d.path().join("backend.sock"), uid());
     assert_eq!(
-        c.claim("bench", OP).await.unwrap(),
+        c.claim("bench", OP, Operation::Create).await.unwrap(),
         Some(vec!["github".to_string()])
     );
     let gone = ReadBack::Deleted {
@@ -124,14 +125,14 @@ async fn a_refusal_is_its_code_and_a_bad_answer_is_unavailable() {
     );
     let c = Claims::beside(&d.path().join("backend.sock"), uid());
     assert_eq!(
-        c.claim("bench", OP).await.unwrap_err(),
+        c.claim("bench", OP, Operation::Create).await.unwrap_err(),
         ClaimError::Refused("DESK_BUSY".into())
     );
     let d2 = dir();
     enclave(d2.path(), Arc::new(|_| json!("not an answer")));
     let c2 = Claims::beside(&d2.path().join("backend.sock"), uid());
     assert!(matches!(
-        c2.claim("bench", OP).await.unwrap_err(),
+        c2.claim("bench", OP, Operation::Create).await.unwrap_err(),
         ClaimError::Unavailable(_)
     ));
 }
@@ -146,26 +147,29 @@ async fn the_enclave_socket_must_be_this_users_and_closed_to_others() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o660)).unwrap();
     let c = Claims::beside(&d.path().join("backend.sock"), uid());
     assert!(matches!(
-        c.claim("bench", OP).await.unwrap_err(),
+        c.claim("bench", OP, Operation::Create).await.unwrap_err(),
         ClaimError::Unavailable(_)
     ));
     let other = Claims::beside(&d.path().join("backend.sock"), uid() + 1);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(matches!(
-        other.claim("bench", OP).await.unwrap_err(),
+        other
+            .claim("bench", OP, Operation::Create)
+            .await
+            .unwrap_err(),
         ClaimError::Unavailable(_)
     ));
     let linked = dir();
     std::os::unix::fs::symlink(&path, linked.path().join(ENCLAVE_SOCKET)).unwrap();
     let c3 = Claims::beside(&linked.path().join("backend.sock"), uid());
     assert!(matches!(
-        c3.claim("bench", OP).await.unwrap_err(),
+        c3.claim("bench", OP, Operation::Create).await.unwrap_err(),
         ClaimError::Unavailable(_)
     ));
     let empty = dir();
     let c4 = Claims::beside(&empty.path().join("backend.sock"), uid());
     assert!(matches!(
-        c4.claim("bench", OP).await.unwrap_err(),
+        c4.claim("bench", OP, Operation::Create).await.unwrap_err(),
         ClaimError::Unavailable(_)
     ));
 }
@@ -203,7 +207,11 @@ async fn an_enclave_that_never_answers_fails_at_the_time_limit() {
         .within(std::time::Duration::from_millis(300));
     let started = std::time::Instant::now();
     let e = c
-        .claim("code-desk", "00000000-0000-5000-8000-000000000001")
+        .claim(
+            "code-desk",
+            "00000000-0000-5000-8000-000000000001",
+            Operation::Create,
+        )
         .await;
     assert!(matches!(e, Err(ClaimError::Unavailable(_))), "{e:?}");
     assert!(

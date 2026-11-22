@@ -184,7 +184,7 @@ a difference answers `unknown`.
 Every change follows the same order:
 
 1. Sign in with the call's credential.
-2. Claim the desk at the Enclave.
+2. Claim the desk at the Enclave, naming the change it is for: `create`, `delete`, `stop`, `start`, `policy_set`, `provider_detach` or `approval_mode`. By it the Enclave tells a desk just created, and can hold a job sent right after the create until the new desk registers. An Enclave that predates the field refuses the claim, as it refuses any unknown field, so this adapter runs beside an Enclave that accepts it.
 3. Make the desk backend call, with the operation's request id as NVIDIA OpenShell's `request_id`.
 4. Read the desk back until the change shows: a create when the desk exists AND its policy is loaded, a delete when the desk is gone, the others as the table says. Reads go on for `deadline_seconds` less 10 s (at most half of it) from when the call was admitted, and for at least 5 s after the send. A read that answers an error is read again: NVIDIA OpenShell answers one right after a create and while a desk is removed. A refused token ends the reads at once. When the reads end before the change shows, it answers `running` and the desk stays held. A change recovered inside another call is read back for 5 s.
 5. Write the answer to the operation's record.
