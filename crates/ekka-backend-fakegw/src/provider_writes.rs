@@ -52,7 +52,9 @@ fn write(
         .as_ref()
         .ok_or_else(|| Status::invalid_argument("missing name"))?;
     let name = meta.name.clone();
-    let mut s = st.lock().unwrap();
+    let mut s = st
+        .lock()
+        .map_err(|_| Status::internal("test gateway state is poisoned"))?;
     let rpc = if update {
         "UpdateProvider"
     } else {
@@ -65,7 +67,10 @@ fn write(
     }
     match (s.providers.get(&name), update) {
         (Some(old), true)
-            if old.metadata.as_ref().unwrap().resource_version == meta.resource_version => {}
+            if old
+                .metadata
+                .as_ref()
+                .is_some_and(|m| m.resource_version == meta.resource_version) => {}
         (None, false) => {}
         _ => return Err(Status::aborted("provider version conflict")),
     }
@@ -76,7 +81,10 @@ fn write(
     values.extend(p.credentials.clone());
     let keys: Vec<_> = values.keys().cloned().collect();
     p.credentials = keys.into_iter().map(|k| (k, "REDACTED".into())).collect();
-    let m = p.metadata.as_mut().unwrap();
+    let m = p
+        .metadata
+        .as_mut()
+        .ok_or_else(|| Status::invalid_argument("missing name"))?;
     m.resource_version += 1;
     m.workspace = ws.into();
     s.providers.insert(name, p.clone());
