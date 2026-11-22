@@ -74,7 +74,8 @@ pub(crate) fn then(n: u64) -> Admitted {
 
 pub(crate) fn create_body(extra: Value) -> CreateBody {
     let mut b = json!({ "name": "code-desk", "image": IMAGE, "policy": policy(),
-                        "providers": ["github"], "environment": { "TZ": "UTC" } });
+                        "providers": ["github"], "environment": { "TZ": "UTC" },
+                        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } });
     if let (Some(o), Some(e)) = (b.as_object_mut(), extra.as_object()) {
         for (k, v) in e {
             o.insert(k.clone(), v.clone());

@@ -371,6 +371,29 @@
         }
       }
     },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_millicores",
+        "memory_mib"
+      ],
+      "description": "A desk's CPU and memory limit, which the kernel enforces on the desk's sandbox. `cpu_millicores`: thousandths of one CPU, so 2000 is two CPUs; the backend applies it as the CPU quota (on Linux cgroup v2, `cpu.max` reads `<cpu_millicores x 100> 100000`). `memory_mib`: mebibytes; the backend applies it as the memory limit (`memory.max` reads `memory_mib x 1048576`). Whole numbers only, so a limit is read back exactly, never rounded.",
+      "properties": {
+        "cpu_millicores": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 256000,
+          "description": "Thousandths of one CPU: 100 is a tenth of a CPU, 256000 is 256 CPUs."
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 4194304,
+          "description": "Mebibytes: 256 is the least a desk is given, 4194304 is 4 TiB."
+        }
+      }
+    },
     "create_body": {
       "type": "object",
       "additionalProperties": false,
@@ -378,7 +401,8 @@
         "name",
         "image",
         "policy",
-        "providers"
+        "providers",
+        "resources"
       ],
       "properties": {
         "name": {
@@ -414,6 +438,10 @@
             "maxLength": 4096
           },
           "description": "Plain environment values. Each name must be in the limits' `environment_keys`. Never a secret: a provider carries secrets."
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "The desk's CPU and memory limit. Required: a desk is never created without one. Each value must be at most the limits' `resources` (`max_cpu_millicores`, `max_memory_mib`), and a grant without `resources` allows no create; either is refused CONSTRAINT_RESOURCES. The adapter sends it to the backend with the create and answers `ready` only when the backend's own record of the desk carries exactly this limit, else `unknown`."
         },
         "repo": {
           "type": "string",
@@ -488,6 +516,7 @@
         "CONSTRAINT_ENVIRONMENT_KEYS",
         "CONSTRAINT_REPO_HOSTS",
         "CONSTRAINT_POLICY_BASELINE",
+        "CONSTRAINT_RESOURCES",
         "CONSTRAINT_CREDENTIAL_ENDPOINT",
         "FIELD_NOT_ALLOWED",
         "DESK_NOT_FOUND",
@@ -508,7 +537,7 @@
         "PROVIDERS_UNREADABLE",
         "PROVIDERS_TOO_MANY"
       ],
-      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the change never reached the desk; nothing changed. DESK_NOT_DISCOVERY: the desk is not one a discovery window allows (no `discovery` in the grant, a name without its `name_prefix`, an image digest or a provider outside its lists), or, on the evidence read, the desk has no permit; nothing changed. DISCOVERY_WINDOW_CLOSED: the grant's `discovery` window has expired; nothing changed. APPROVAL_MODE_NOT_APPLIED: the backend's setting, read back, is not the mode asked for; the adapter wrote no permit and set the desk back to manual."
+      "description": "Why an answer is refused, or what is not known. A CONSTRAINT_ code names the limit that refused it. Our own words only: a backend's error text is never forwarded. DESK_BUSY: the desk is held by a running job or another change; nothing changed, and the change may be asked again once the desk is free. CONSTRAINT_CREDENTIAL_ENDPOINT: a policy change would add, change or move a network endpoint that carries a provider's credentials; it has no limit of its own, because changing where a provider's credentials reach is a provider change, made at install, never a policy change. NOT_APPLIED: the change never reached the desk; nothing changed. DESK_NOT_DISCOVERY: the desk is not one a discovery window allows (no `discovery` in the grant, a name without its `name_prefix`, an image digest or a provider outside its lists), or, on the evidence read, the desk has no permit; nothing changed. DISCOVERY_WINDOW_CLOSED: the grant's `discovery` window has expired; nothing changed. APPROVAL_MODE_NOT_APPLIED: the backend's setting, read back, is not the mode asked for; the adapter wrote no permit and set the desk back to manual. CONSTRAINT_RESOURCES: a create asks more CPU or memory than the limits' `resources` allow, or the limits carry no `resources`; nothing changed."
     },
     "result": {
       "type": "object",
@@ -568,6 +597,10 @@
           "items": {
             "$ref": "#/$defs/name"
           }
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "With outcome `ready` only, on an answer that reads one desk back (`create`, `stop`, `start`, `status`, `policy_get`, `policy_set`, `provider_detach`, `approval_mode`): the CPU and memory limit the backend holds for the desk, as the adapter read it. Left out for a desk the backend holds with no limit, or with one this contract cannot state. It is the backend's record of the desk, not a reading of the kernel: the Enclave compares the kernel's own values with it before any work starts on the desk."
         },
         "approval_mode": {
           "enum": [
@@ -776,6 +809,11 @@
                 {
                   "required": [
                     "grant_facts"
+                  ]
+                },
+                {
+                  "required": [
+                    "resources"
                   ]
                 }
               ]

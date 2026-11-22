@@ -256,6 +256,17 @@ impl Backend {
                     .map(|s| s.providers.clone())
                     .unwrap_or_default(),
             ),
+            // The backend's record of the limit, when it holds one this
+            // contract states; the kernel's values are the Enclave's to read.
+            resources: crate::resources::Held::read(
+                sb.spec
+                    .as_ref()
+                    .and_then(|s| s.template.as_ref())
+                    .and_then(|t| t.resources.as_ref())
+                    .map(crate::resources::json)
+                    .as_ref(),
+            )
+            .limit(),
             ..DeskFacts::default()
         };
         Ok(Some((sb, facts)))
@@ -723,6 +734,8 @@ impl Backend {
             spec: Some(SandboxSpec {
                 template: Some(SandboxTemplate {
                     image: body.image.clone(),
+                    // Limits only: NVIDIA OpenShell's Docker driver refuses a request.
+                    resources: body.resources.map(|r| r.template()),
                     ..Default::default()
                 }),
                 policy: Some(policy),
@@ -807,6 +820,7 @@ impl Backend {
             image: &body.image,
             policy: &body.policy,
             providers: &body.providers,
+            resources: body.resources,
         };
         self.finish(
             a,

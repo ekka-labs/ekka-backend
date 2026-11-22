@@ -639,7 +639,8 @@ async fn a_create_is_reissued_byte_for_byte() {
         .insert("CreateSandbox".into());
     let body = serde_json::to_vec(&json!({ "name": "desk-c", "image":
         "ghcr.io/example/desk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "policy": crate::driver::tests::policy(), "providers": ["github"] }))
+        "policy": crate::driver::tests::policy(), "providers": ["github"],
+        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } }))
     .unwrap();
     let t = signed(1, "write", Some((&body, crate::driver::tests::grant())));
     let a = r.call(Operation::Create, "", 1, &body, &t).await;
@@ -705,7 +706,8 @@ async fn a_create_that_never_reached_the_desk_is_not_applied() {
         .insert("CreateSandbox".into());
     let body = serde_json::to_vec(&json!({ "name": "desk-c", "image":
         "ghcr.io/example/desk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "policy": crate::driver::tests::policy(), "providers": ["github"] }))
+        "policy": crate::driver::tests::policy(), "providers": ["github"],
+        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } }))
     .unwrap();
     let t = signed(1, "write", Some((&body, crate::driver::tests::grant())));
     assert_eq!(
@@ -824,7 +826,8 @@ async fn an_ok_answer_with_no_sandbox_is_never_absent() {
         .insert("CreateSandbox".into());
     let body = serde_json::to_vec(&json!({ "name": "desk-c", "image":
         "ghcr.io/example/desk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "policy": crate::driver::tests::policy(), "providers": ["github"] }))
+        "policy": crate::driver::tests::policy(), "providers": ["github"],
+        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } }))
     .unwrap();
     let t = signed(1, "write", Some((&body, crate::driver::tests::grant())));
     assert_eq!(
@@ -902,7 +905,8 @@ async fn a_create_settled_by_its_marker_after_the_key_rotated_reads_its_pins_fro
         .insert("CreateSandbox".into());
     let body = serde_json::to_vec(&json!({ "name": "desk-c", "image":
         "ghcr.io/example/desk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "policy": crate::driver::tests::policy(), "providers": ["github"] }))
+        "policy": crate::driver::tests::policy(), "providers": ["github"],
+        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } }))
     .unwrap();
     let t = signed(1, "write", Some((&body, crate::driver::tests::grant())));
     assert_eq!(
@@ -1440,7 +1444,7 @@ fn the_contracts_settle_files_are_what_recovery_reads() {
 }
 
 /// Every refusal code the adapter can answer is one the contract names
-/// (0.67.0 adds NOT_APPLIED; 0.76.0 the three discovery codes; 0.83.0 the five grant_facts codes). The match below fails to compile when a code
+/// (0.67.0 adds NOT_APPLIED; 0.76.0 the three discovery codes; 0.83.0 the five grant_facts codes; 0.86.0 CONSTRAINT_RESOURCES). The match below fails to compile when a code
 /// is added without being listed here.
 #[test]
 fn every_answer_code_is_the_contracts() {
@@ -1464,6 +1468,7 @@ fn every_answer_code_is_the_contracts() {
             | ConstraintProviderConfigDigests
             | ConstraintEnvironmentKeys
             | ConstraintPolicyBaseline
+            | ConstraintResources
             | ConstraintCredentialEndpoint
             | FieldNotAllowed
             | OperationIdReused
@@ -1503,6 +1508,7 @@ fn every_answer_code_is_the_contracts() {
         ConstraintProviderConfigDigests,
         ConstraintEnvironmentKeys,
         ConstraintPolicyBaseline,
+        ConstraintResources,
         ConstraintCredentialEndpoint,
         FieldNotAllowed,
         OperationIdReused,

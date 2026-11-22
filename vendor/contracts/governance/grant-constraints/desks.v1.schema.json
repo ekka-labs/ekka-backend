@@ -9,7 +9,7 @@
   ],
   "$defs": {
     "full": {
-      "description": "The limits written out. They are stored on the grant, copied by Govern into the signed gate token's `constraints`, and enforced by the backend adapter before any backend call. CLOSED: an unknown key is refused, never ignored, because an ignored limit is a limit nobody enforces. Every list the adapter needs in order to allow anything is required and non-empty: no list, no create. Rules a schema cannot state are the adapter's, and refuse with the code naming the limit: every name in `providers` has an entry in `provider_config_digests`, and no other name does; a create's image digest (after `@`, or the whole value when it is a local content ID) is in `image_digests`; every host in `policy_baseline.network.allowed_hosts` is inside the `allowed_hosts` ceiling.",
+      "description": "The limits written out. They are stored on the grant, copied by Govern into the signed gate token's `constraints`, and enforced by the backend adapter before any backend call. CLOSED: an unknown key is refused, never ignored, because an ignored limit is a limit nobody enforces. Every list the adapter needs in order to allow anything is required and non-empty: no list, no create. Rules a schema cannot state are the adapter's, and refuse with the code naming the limit: every name in `providers` has an entry in `provider_config_digests`, and no other name does; a create's image digest (after `@`, or the whole value when it is a local content ID) is in `image_digests`; every host in `policy_baseline.network.allowed_hosts` is inside the `allowed_hosts` ceiling; a create's CPU and memory limit is at most `resources`, and a grant without `resources` allows no create.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -131,6 +131,26 @@
                   "description": "A change may add the network access a provider needs only for a provider in `providers`."
                 }
               }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_cpu_millicores", "max_memory_mib"],
+          "description": "The most CPU and memory one desk may be created with: a create's `resources` must be at most each value. OPTIONAL in this schema only so that a grant written before it stays valid for every other change; a create needs it, and the adapter refuses every create under a grant without it. Either refusal is CONSTRAINT_RESOURCES.",
+          "properties": {
+            "max_cpu_millicores": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 256000,
+              "description": "Thousandths of one CPU, as a create's `cpu_millicores`."
+            },
+            "max_memory_mib": {
+              "type": "integer",
+              "minimum": 256,
+              "maximum": 4194304,
+              "description": "Mebibytes, as a create's `memory_mib`."
             }
           }
         },

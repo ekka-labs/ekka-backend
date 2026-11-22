@@ -458,6 +458,7 @@ fn every_code_is_the_contracts() {
         Code::ConstraintProviderConfigDigests,
         Code::ConstraintEnvironmentKeys,
         Code::ConstraintPolicyBaseline,
+        Code::ConstraintResources,
         Code::ConstraintCredentialEndpoint,
         Code::FieldNotAllowed,
         Code::OperationIdReused,

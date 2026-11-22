@@ -43,6 +43,11 @@ pub(crate) struct DeskConstraints {
     /// policy must already be in `image_digests` and `policy_digests`.
     #[serde(default)]
     pub projects: Option<Vec<Project>>,
+    /// The most CPU and memory one desk may be created with (contracts
+    /// 0.86.0). Absent: the grant allows no create, though it still holds for
+    /// every other change.
+    #[serde(default)]
+    pub resources: Option<crate::resources::Ceiling>,
 }
 
 /// One project in the grant (desks.v1 `projects`), closed.
@@ -130,7 +135,7 @@ pub(crate) struct Network {
 pub(crate) fn check(value: &Value) -> Result<(), String> {
     // The two optional blocks are absent or present, never null: serde reads a
     // null as absent, which would skip every check on them.
-    for k in ["discovery", "projects"] {
+    for k in ["discovery", "projects", "resources"] {
         if value.get(k).is_some_and(Value::is_null) {
             return Err(format!("{k} must be absent or present, never null"));
         }
@@ -220,6 +225,12 @@ pub(crate) fn check(value: &Value) -> Result<(), String> {
     }
     if let Some(projects) = &c.projects {
         check_projects(projects, &c.image_digests, &c.policy_digests)?;
+    }
+    if c.resources.is_some_and(|r| !r.in_bounds()) {
+        return Err(
+            "resources: max_cpu_millicores is 100 to 256000 and max_memory_mib is 256 to 4194304"
+                .into(),
+        );
     }
     Ok(())
 }

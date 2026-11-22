@@ -42,5 +42,9 @@
       "provider_added": "listed_only"
     }
   },
+  "resources": {
+    "max_cpu_millicores": 4000,
+    "max_memory_mib": 8192
+  },
   "requires_role": "admin"
 }

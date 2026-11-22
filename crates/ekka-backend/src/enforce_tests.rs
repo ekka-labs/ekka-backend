@@ -50,9 +50,15 @@ fn grant_for(policies: &[&Value]) -> DeskConstraints {
     grant(Some(&g)).unwrap()
 }
 
+/// The limit a create asks in these tests: inside the sample grant's ceiling (4000, 8192).
+const LIMIT: crate::resources::Resources = crate::resources::Resources {
+    cpu_millicores: 2000,
+    memory_mib: 4096,
+};
+
 fn create_body(policy: &Value) -> Value {
     json!({ "name": "code-desk", "image": IMAGE, "policy": policy, "providers": ["github"],
-            "environment": { "TZ": "UTC" } })
+            "environment": { "TZ": "UTC" }, "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } })
 }
 
 fn try_create(g: &DeskConstraints, b: &Value) -> Result<Value, Code> {
@@ -478,8 +484,12 @@ fn a_resulting_desk_that_differs_from_the_request_does_not_match() {
         image: IMAGE,
         policy: &policy(),
         providers: &providers,
+        resources: Some(LIMIT),
     };
-    let made = || json!({ "spec": { "template": { "image": IMAGE }, "providers": ["github"], "policy": policy() } });
+    let made = || {
+        json!({ "spec": { "template": { "image": IMAGE, "resources": { "limits": { "cpu": "2000m", "memory": "4096Mi" } } },
+                                    "providers": ["github"], "policy": policy() } })
+    };
     assert!(result_matches(&e, &made()));
     // The gateway's canonical spelling of the same policy still matches.
     let mut spelled = made();
@@ -513,8 +523,24 @@ fn a_resulting_desk_that_differs_from_the_request_does_not_match() {
             Box::new(|s| s["spec"]["template"]["runtimeClassName"] = json!("runc")),
         ),
         (
-            "template resources",
+            "template resources the contract cannot state",
             Box::new(|s| s["spec"]["template"]["resources"] = json!({ "cpu": "8" })),
+        ),
+        (
+            "another CPU limit",
+            Box::new(|s| s["spec"]["template"]["resources"]["limits"]["cpu"] = json!("4000m")),
+        ),
+        (
+            "another memory limit",
+            Box::new(|s| s["spec"]["template"]["resources"]["limits"]["memory"] = json!("4097Mi")),
+        ),
+        (
+            "no limit",
+            Box::new(|s| s["spec"]["template"]["resources"] = Value::Null),
+        ),
+        (
+            "a request beside the limit",
+            Box::new(|s| s["spec"]["template"]["resources"]["requests"] = json!({ "cpu": "500m" })),
         ),
         (
             "resource requirements",

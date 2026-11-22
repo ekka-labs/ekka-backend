@@ -12,7 +12,10 @@
 //!   network endpoint ENFORCE (an AUDIT or unset endpoint is refused).
 //! - `user_namespaces`, `driver`, `runtime`: template fields the adapter never
 //!   sets and a policy change cannot reach; the post-write comparison answers
-//!   `unknown` if a resulting sandbox carries any of them, or `resources`.
+//!   `unknown` if a resulting sandbox carries any of them.
+//! - `resources` (contracts 0.86.0): a create's CPU and memory limit is at
+//!   most the grant's, and a grant without one allows no create. The
+//!   resulting sandbox must hold exactly the limit asked (`resources.rs`).
 //!
 //! The policy is read in one canonical form (`normalize`), so a rule sees the
 //! same JSON whatever spelling the caller used.
@@ -46,6 +49,11 @@ pub(crate) struct CreateBody {
     pub environment: Map<String, Value>,
     #[serde(default)]
     pub repo: Option<String>,
+    /// Required by the contract (0.86.0). `Option` only so an operation
+    /// recorded by an older adapter still reads for recovery; [`create`]
+    /// refuses a create without one.
+    #[serde(default)]
+    pub resources: Option<crate::resources::Resources>,
 }
 
 /// A policy change's body: the contract's `policy_set_body`. Its fields are
@@ -123,6 +131,17 @@ pub(crate) fn create(g: &DeskConstraints, b: &CreateBody) -> Result<Value, Code>
     // dropped. The grant's `repo_hosts` is unused.
     if b.repo.as_deref().is_some_and(|r| !r.is_empty()) {
         return Err(Code::FieldNotAllowed);
+    }
+    // Every desk has a CPU and memory limit (contracts 0.86.0): none, or one
+    // outside the contract's bounds, is not a create; one above the grant's,
+    // or under a grant with none, is refused by that limit.
+    let asked = b
+        .resources
+        .filter(crate::resources::Resources::in_bounds)
+        .ok_or(Code::RequestInvalid)?;
+    let ceiling = g.resources.ok_or(Code::ConstraintResources)?;
+    if !asked.within(&ceiling) {
+        return Err(Code::ConstraintResources);
     }
     Ok(policy)
 }
@@ -446,6 +465,9 @@ pub(crate) struct Expected<'a> {
     pub image: &'a str,
     pub policy: &'a Value,
     pub providers: &'a [String],
+    /// The limit asked; `None` only for an operation an older adapter
+    /// recorded, whose desk must then hold none.
+    pub resources: Option<crate::resources::Resources>,
 }
 
 /// The POST-WRITE comparison: the sandbox the backend reports
@@ -471,17 +493,18 @@ pub(crate) fn result_matches(e: &Expected<'_>, sandbox: &Value) -> bool {
         (Some(a), Some(b)) => a == b,
         _ => false,
     };
-    let forbidden = [
-        "userNamespaces",
-        "driverConfig",
-        "runtimeClassName",
-        "resources",
-    ];
+    let forbidden = ["userNamespaces", "driverConfig", "runtimeClassName"];
     let template_ok = forbidden
         .iter()
         .all(|f| template.get(f).is_none_or(Value::is_null))
         && spec.get("resourceRequirements").is_none_or(Value::is_null);
-    image_ok && providers_ok && policy_ok && template_ok
+    // Exactly the limit asked, and nothing beside it: no request, no other key.
+    let held = crate::resources::Held::read(template.get("resources"));
+    let resources_ok = match e.resources {
+        Some(r) => held == crate::resources::Held::Limit(r),
+        None => held == crate::resources::Held::None,
+    };
+    image_ok && providers_ok && policy_ok && template_ok && resources_ok
 }
 
 #[cfg(test)]

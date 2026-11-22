@@ -38,6 +38,7 @@ mod provider_info;
 mod providers;
 mod recover;
 mod redact;
+mod resources;
 mod routes;
 mod server;
 mod signin;

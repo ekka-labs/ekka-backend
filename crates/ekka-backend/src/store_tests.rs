@@ -30,8 +30,9 @@ fn store(w: &World) -> crate::recover::Recovery {
 
 fn create(name: &str) -> Bytes {
     Bytes::from(
-        json!({ "name": name, "image": IMAGE, "policy": policy(), "providers": ["github"] })
-            .to_string(),
+        json!({ "name": name, "image": IMAGE, "policy": policy(), "providers": ["github"],
+        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } })
+        .to_string(),
     )
 }
 
@@ -149,7 +150,8 @@ async fn a_refusal_delivered_twice_stays_refused() {
     let r = route(Operation::Create, None);
     let body = Bytes::from(
         json!({ "name": "code-desk", "image": format!("x@sha256:{}", "c".repeat(64)),
-                "policy": policy(), "providers": ["github"] })
+                "policy": policy(), "providers": ["github"],
+        "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } })
         .to_string(),
     );
     let first = deliver(&w, &s, &r, &body).await;

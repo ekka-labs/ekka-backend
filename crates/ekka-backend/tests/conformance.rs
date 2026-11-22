@@ -180,6 +180,8 @@ fn grant() -> Value {
         .map(|p| json!(digest("policy", p)))
         .collect();
     g["provider_config_digests"] = json!({ "github": digest("provider", &provider_fixture()) });
+    // The most CPU and memory one desk may ask (contracts 0.86.0).
+    g["resources"] = json!({ "max_cpu_millicores": 4000, "max_memory_mib": 8192 });
     g
 }
 
@@ -599,7 +601,8 @@ impl Harness {
 
     fn create_body(&self, policy: Value) -> Value {
         json!({ "name": DESK, "image": IMAGE, "policy": policy,
-                "providers": ["github"], "environment": { "TZ": "UTC" } })
+                "providers": ["github"], "environment": { "TZ": "UTC" },
+                "resources": { "cpu_millicores": 2000, "memory_mib": 4096 } })
     }
 
     async fn create(&mut self, body: &Value) -> (Reply, String) {
@@ -1801,3 +1804,5 @@ async fn the_secret_search_finds_a_planted_secret() {
 
 #[path = "conformance/provider_connections.rs"]
 mod provider_connections;
+#[path = "conformance/resources.rs"]
+mod resources;
