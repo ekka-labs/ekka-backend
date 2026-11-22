@@ -35,6 +35,9 @@ pub struct State {
     pub seen_tokens: Vec<String>,
     /// Provider records in the desk workspace, by name.
     pub providers: BTreeMap<String, Provider>,
+    pub provider_written_credentials: BTreeMap<String, std::collections::HashMap<String, String>>,
+    pub provider_write_error: Option<tonic::Code>,
+    pub provider_apply_then_error: Option<tonic::Code>,
     /// Profiles by (workspace, id); "" is what the workspace's list sees as
     /// platform and static profiles, each with its own `scope`.
     pub profiles: BTreeMap<(String, String), ProviderProfile>,
@@ -355,6 +358,16 @@ where
                 "/openshell.v1.OpenShell/GetSandboxLogs" => {
                     Grpc::new(tonic_prost::ProstCodec::default())
                         .unary(Unary(st, crate::discovery::get_logs), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/CreateProvider" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, crate::provider_writes::create), req)
+                        .await
+                }
+                "/openshell.v1.OpenShell/UpdateProvider" => {
+                    Grpc::new(tonic_prost::ProstCodec::default())
+                        .unary(Unary(st, crate::provider_writes::update), req)
                         .await
                 }
                 "/openshell.v1.OpenShell/GetProvider" => {

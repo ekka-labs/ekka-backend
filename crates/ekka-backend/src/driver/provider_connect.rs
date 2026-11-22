@@ -4,28 +4,30 @@ use openshell_proto::openshell::datamodel::v1::{ObjectMeta, Provider};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ConnectBody {
     pub name: String,
     pub r#type: String,
     pub profile_workspace: String,
-    pub config: HashMap<String, String>,
     pub credential_refs: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "present_version",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub expected_resource_version: Option<String>,
 }
+fn present_version<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(d).map(Some)
+}
+
 impl ConnectBody {
-    fn check(&self, workspace: &str) -> Result<Option<u64>, Code> {
+    pub(crate) fn check(&self, workspace: &str) -> Result<Option<u64>, Code> {
         if !crate::routes::plain_name(&self.name)
             || !crate::routes::plain_name(&self.r#type)
             || (!self.profile_workspace.is_empty() && self.profile_workspace != workspace)
-            || self.config.len() > 16
             || self.credential_refs.len() > 8
-            || self
-                .config
-                .iter()
-                .any(|(k, v)| !crate::provider_credentials::key_name(k) || v.len() > 1024)
             || self.credential_refs.iter().any(|(k, v)| {
                 !crate::provider_credentials::key_name(k)
                     || uuid::Uuid::parse_str(v).is_err()
@@ -91,14 +93,11 @@ impl Backend {
                 }),
                 r#type: body.r#type.clone(),
                 profile_workspace: body.profile_workspace.clone(),
-                config: body.config.clone(),
+                config: HashMap::new(),
                 ..Default::default()
             },
             (Some(p), Some(v)) if p.metadata.as_ref().is_some_and(|m| m.resource_version == v) => {
-                if p.r#type != body.r#type
-                    || p.profile_workspace != body.profile_workspace
-                    || p.config != body.config
-                {
+                if p.r#type != body.r#type || p.profile_workspace != body.profile_workspace {
                     return refused(Code::FieldNotAllowed);
                 }
                 p.clone()
@@ -131,6 +130,9 @@ impl Backend {
                 Err(e) => return self.read_failed(&e),
             }
         };
+        if !crate::provider_info::enforced(&profile) {
+            return refused(Code::ConstraintCredentialEndpoint);
+        }
         for key in body.credential_refs.keys() {
             if !profile
                 .credentials
@@ -161,7 +163,20 @@ impl Backend {
             return refused(Code::ConstraintProviderConfigDigests);
         }
         // NVIDIA merges supplied credential keys; never send REDACTED values.
-        candidate.credentials = material.for_gateway();
+        // Provider reads include gateway-internal handles/expiry state. Never
+        // submit those internal fields as user-authored provider input.
+        candidate = Provider {
+            metadata: Some(ObjectMeta {
+                name: body.name.clone(),
+                resource_version: version.unwrap_or(0),
+                ..Default::default()
+            }),
+            r#type: body.r#type.clone(),
+            profile_workspace: body.profile_workspace.clone(),
+            config: candidate.config.clone(),
+            credentials: material.for_gateway(),
+            ..Default::default()
+        };
         if !notes.sending() {
             return refused(Code::BackendUnavailable);
         }
@@ -183,9 +198,18 @@ impl Backend {
                 GatewayError::Unauthenticated | GatewayError::PermissionDenied => {
                     refused(Code::BackendRefused)
                 }
-                GatewayError::Refused { .. } | GatewayError::NotFound => {
-                    refused(Code::BackendRefused)
+                GatewayError::Refused {
+                    code: tonic::Code::AlreadyExists | tonic::Code::Aborted,
+                    ..
+                } => refused(Code::VersionConflict),
+                GatewayError::Refused {
+                    code:
+                        tonic::Code::InvalidArgument
+                        | tonic::Code::FailedPrecondition
+                        | tonic::Code::Unimplemented,
+                    ..
                 }
+                | GatewayError::NotFound => refused(Code::BackendRefused),
                 _ => Answer::unknown(),
             };
         }

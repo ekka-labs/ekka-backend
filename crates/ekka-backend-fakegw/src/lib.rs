@@ -9,3 +9,5 @@ pub mod fake_gateway;
 pub mod fake_issuer;
 pub mod faults;
 pub mod sandboxes;
+
+pub mod provider_writes;

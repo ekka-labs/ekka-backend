@@ -833,8 +833,8 @@ async fn a_call_without_a_valid_authorization_reaches_nothing() {
     h.send(&c).await.assert_refused("CREDENTIAL_MISSING");
 
     let mut c = h.call("POST", "/v1/providers", None, Grant::write(&grant));
-    c.gate_token = None;
-    h.send(&c).await.assert_refused("NOT_AVAILABLE");
+    c.gate_token = Some(String::new());
+    h.send(&c).await.assert_refused("TOKEN_INVALID");
 
     let c = h.call(
         "POST",

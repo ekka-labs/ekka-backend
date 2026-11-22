@@ -177,6 +177,8 @@ pub struct DeskFacts {
     /// `grant_facts` only. Says nothing about any desk.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_facts: Option<GrantFacts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_info: Option<crate::provider_info::ProviderInfo>,
 }
 
 impl Answer {

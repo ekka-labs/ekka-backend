@@ -47,25 +47,24 @@ Each line is enforced in this repository's code, named in brackets.
 - **No signing key.** It holds only Govern's PUBLIC keys: one or two Ed25519
   keys, each matched to a token by exact `key_id` (`config.rs`, `token.rs`). It
   can check Govern's signature. It cannot make one.
-- **No provider secret.** It reads provider records only as NVIDIA OpenShell
-  answers them, with every credential value `REDACTED`. Any other value is
-  refused `PROVIDER_CREDENTIAL_NOT_REDACTED`, named by its key, never hashed or
-  shown (`providers.rs`; tested in `providers_tests.rs`). It never creates,
-  changes or deletes a provider record.
+- **No stored provider secret.** Provider reads must carry only `REDACTED`
+  credential values. A governed `provider_connect` receives fresh credentials
+  in one local request header after signature, grant and body verification.
+  It passes them to the approved provider create or update call, never to an
+  operation record, response or log. The request body carries one-use reference
+  IDs only (`provider_credentials.rs`, `driver/provider_connect.rs`).
 - **Only its own sign-in.** It signs in only as its own client,
   `ekka-desk-admin`, and the configuration is refused if it names any other
   (`config.rs`). That client is NOT powerless: its calls (below) need
-  `sandbox:read`, `sandbox:write`, `provider:read` and `config:write`, with the
+  `sandbox:read`, `sandbox:write`, `provider:read`, `provider:write` and
+  `config:write`, with the
   administrator role NVIDIA OpenShell's gateway requires for them. It needs
-  exactly those, never `provider:write` or `openshell:all`. It never holds the
+  those scoped permissions, never `openshell:all`. It never holds the
   desk backend's bootstrap administrator or the sign-in service's admin
   password.
-- **No way into a desk.** Its desk backend client has fifteen calls and no
-  more: nine reads (a desk, its policy status, a provider, a provider profile,
-  the profile list, a desk's settings, its draft proposals, their decision
-  history, its log lines) and six changes (create, delete, stop or start, set
-  policy, detach a provider, set the one `proposal_approval_mode` setting). It
-  has no call that runs a command in a desk, opens a shell, approves a
+- **No way into a desk.** Its desk backend client reads desk and provider
+  metadata and performs the approved desk and provider administration calls.
+  It has no call that runs a command in a desk, opens a shell, approves a
   proposal, or moves a file in or out (`gateway.rs`).
 - **One record per change, and nothing else on disk.** Each change is written
   to `<state_dir>/operations/<request id>.json` (mode 0600, in a folder only the
@@ -200,6 +199,8 @@ The release is OWED from the moment the answer is written: the record names it i
 | `delete` | GetSandbox, DeleteSandbox, then GetSandbox until NOT_FOUND | released with `{deleted: true, sandbox_id}` |
 | `stop`, `start` | StopSandbox or StartSandbox, then reads until the phase shows | the desk's facts |
 | `policy_set` | GetSandbox (the creation policy), UpdateConfig at `expected_resource_version`, then reads until the new revision is loaded | the new `policy_digest` and `resource_version` |
+| `provider_info` | GetProvider and profile reads | provider type, workspace, version, credential names and descriptors, enforcement and configuration digest; no config or credential values |
+| `provider_connect` | CreateProvider or UpdateProvider, then GetProvider | `ready` requires an acknowledged write and matching read-back; a lost acknowledgement is `unknown` |
 | `provider_detach` | DetachSandboxProvider at `expected_resource_version`, then reads | the remaining `providers`; released with the new `providers_digest` |
 | `status` | GetSandbox, GetSandboxPolicyStatus, and each provider's record and profile | the desk's facts and `providers_digest` |
 | `policy_get` | GetSandbox, GetSandboxPolicyStatus | `policy_digest`, `resource_version`, and the loaded `policy` itself in the canonical form its digest is computed from (left out when its JSON is over 64 KiB; contracts 0.75.0) |
@@ -216,6 +217,11 @@ The release is OWED from the moment the answer is written: the record names it i
 - **A change that completed but whose desk does not match** the request answers `unknown`.
 
 ### Recovery
+
+Provider connections have separate recovery rules: a settled request replays its
+record, a live request remains `running`, and an unfinished request found after
+restart becomes `unknown`. Credentials are never persisted, so recovery never
+reissues a provider write. Stage a fresh credential for a new request.
 
 A change still `running` is never finished by the adapter on its own. The next call for its desk, `status` or a change, takes each one first, oldest first (`recover.rs`). A change whose first attempt is still running in the adapter is never taken.
 

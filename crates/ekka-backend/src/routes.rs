@@ -20,7 +20,8 @@ pub enum Operation {
     /// What a desks grant's limits are built from (contracts 0.83.0). Refused
     /// `NOT_AVAILABLE` until the adapter computes them.
     GrantFacts,
-    /// Reserved in v1: always refused `NOT_AVAILABLE`.
+    /// Non-secret metadata used before staging a provider token.
+    ProviderInfo,
     ProviderConnect,
 }
 
@@ -31,7 +32,11 @@ impl Operation {
     pub fn mutates(self) -> bool {
         !matches!(
             self,
-            Self::Status | Self::PolicyGet | Self::DiscoveryEvidence | Self::GrantFacts
+            Self::Status
+                | Self::PolicyGet
+                | Self::DiscoveryEvidence
+                | Self::GrantFacts
+                | Self::ProviderInfo
         )
     }
 
@@ -50,6 +55,7 @@ impl Operation {
             Self::ApprovalMode,
             Self::DiscoveryEvidence,
             Self::GrantFacts,
+            Self::ProviderInfo,
             Self::ProviderConnect,
         ]
         .into_iter()
@@ -70,6 +76,7 @@ impl Operation {
             Self::ApprovalMode => "approval_mode",
             Self::DiscoveryEvidence => "discovery_evidence",
             Self::GrantFacts => "grant_facts",
+            Self::ProviderInfo => "provider_info",
             Self::ProviderConnect => "provider_connect",
         }
     }
@@ -131,6 +138,16 @@ pub fn route(method: &str, path: &str) -> Result<Route, Miss> {
             desk: None,
             provider: None,
         }),
+        ("GET", ["", "v1", "providers", p]) => {
+            if !plain_name(p) {
+                return Err(Miss::BadName);
+            }
+            Ok(Route {
+                operation: Operation::ProviderInfo,
+                desk: None,
+                provider: Some((*p).to_string()),
+            })
+        }
         ("GET", ["", "v1", "grant-facts"]) => Ok(Route {
             operation: Operation::GrantFacts,
             desk: None,

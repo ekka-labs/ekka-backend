@@ -37,11 +37,7 @@ fn every_route_is_the_contracts_and_only_those() {
         );
         assert_eq!(Operation::from_name(r.operation.name()), Some(r.operation));
         let reserved = o["reserved"].as_bool().unwrap();
-        assert_eq!(
-            reserved,
-            r.operation == Operation::ProviderConnect,
-            "{method} {path}"
-        );
+        assert!(!reserved, "{method} {path}");
     }
     assert_eq!(list.len(), 12, "twelve operations in v1");
 }
