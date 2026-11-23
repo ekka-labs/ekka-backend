@@ -11,6 +11,8 @@
 //! answers `running` with that change's request id, and a change is refused
 //! `DESK_BUSY` before anything is sent.
 
+mod provider_record;
+
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -72,7 +74,10 @@ pub(crate) async fn answer(
     // A settled change's release that did not go through is retried
     // first, at every call: it never waits on a call for its own desk.
     // Except grant_facts, which writes nothing: a release writes a record.
-    if route.operation != Operation::GrantFacts {
+    if !matches!(
+        route.operation,
+        Operation::GrantFacts | Operation::ProviderConnect | Operation::ProviderInfo
+    ) {
         b.release_pending().await;
     }
     let store = recovery.store();
@@ -96,10 +101,27 @@ pub(crate) async fn answer(
     }
     let request_id = verified.request_id.clone();
     match store.get(&request_id) {
-        Ok(Some(rec)) => return recorded(&rec, route, body),
+        Ok(Some(rec)) => {
+            return if route.operation == Operation::ProviderConnect {
+                provider_record::existing(recovery, &rec, route, body)
+            } else {
+                recorded(&rec, route, body)
+            }
+        }
         Ok(None) => {}
         // An unreadable record is never taken for "none": nothing executes.
         Err(_) => return Answer::refused(Code::BackendUnavailable),
+    }
+    // Do not persist an invalid provider body, especially a caller trying to
+    // put plaintext credentials into it. Only the closed metadata shape is kept.
+    if route.operation == Operation::ProviderConnect {
+        let parsed = match enforce::body::<crate::driver::provider_connect::ConnectBody>(body) {
+            Ok(p) => p,
+            Err(c) => return Answer::refused(c),
+        };
+        if let Err(c) = parsed.check(b.gateway.workspace()) {
+            return Answer::refused(c);
+        }
     }
     let gate_token = verified.gate_token.clone();
     let operation_id_header = verified.operation_id.clone();
@@ -290,7 +312,15 @@ async fn dispatch(
         }
         Operation::DiscoveryEvidence => b.discovery_evidence(a, desk).await,
         Operation::GrantFacts => b.grant_facts(a).await,
-        // Reserved in v1: providers are set at install.
-        Operation::ProviderConnect => Answer::refused(Code::NotAvailable),
+        Operation::ProviderInfo => {
+            b.provider_info(a, route.provider.as_deref().unwrap_or_default())
+                .await
+        }
+        Operation::ProviderConnect => {
+            match enforce::body::<crate::driver::provider_connect::ConnectBody>(body) {
+                Ok(p) => b.connect_provider(a, &p, notes).await,
+                Err(code) => Answer::refused(code),
+            }
+        }
     }
 }

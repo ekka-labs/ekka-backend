@@ -33,6 +33,8 @@ mod health;
 mod normalize;
 mod ops;
 mod permits;
+mod provider_credentials;
+mod provider_info;
 mod providers;
 mod recover;
 mod redact;

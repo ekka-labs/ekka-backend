@@ -346,6 +346,7 @@ struct Call {
     /// Override the gate token header (None: sign one for this call).
     gate_token: Option<String>,
     credential: String,
+    provider_header: Option<String>,
 }
 
 struct Harness {
@@ -533,6 +534,7 @@ impl Harness {
             operation_id: fresh_operation_id(),
             gate_token: None,
             credential: SECRET.to_string(),
+            provider_header: None,
         }
     }
 
@@ -542,8 +544,13 @@ impl Harness {
             .gate_token
             .clone()
             .unwrap_or_else(|| gate_token(&c.grant, &c.body));
+        let provider_header = c
+            .provider_header
+            .as_ref()
+            .map(|v| format!("x-ekka-provider-credentials: {v}\r\n"))
+            .unwrap_or_default();
         let head = format!(
-            "{} {} HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\nx-ekka-gate-token: {token}\r\nauthorization: Bearer {}\r\nx-ekka-operation-id: {}\r\nx-ekka-backend-contract: ekka.backend.v1\r\n\r\n",
+            "{} {} HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\nx-ekka-gate-token: {token}\r\nauthorization: Bearer {}\r\nx-ekka-operation-id: {}\r\nx-ekka-backend-contract: ekka.backend.v1\r\n{provider_header}\r\n",
             c.method,
             c.path,
             c.body.len(),
@@ -833,8 +840,8 @@ async fn a_call_without_a_valid_authorization_reaches_nothing() {
     h.send(&c).await.assert_refused("CREDENTIAL_MISSING");
 
     let mut c = h.call("POST", "/v1/providers", None, Grant::write(&grant));
-    c.gate_token = None;
-    h.send(&c).await.assert_refused("NOT_AVAILABLE");
+    c.gate_token = Some(String::new());
+    h.send(&c).await.assert_refused("TOKEN_INVALID");
 
     let c = h.call(
         "POST",
@@ -1791,3 +1798,6 @@ async fn the_secret_search_finds_a_planted_secret() {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h.assert_no_secret_shown()));
     assert!(caught.is_err(), "a secret in a response is found");
 }
+
+#[path = "conformance/provider_connections.rs"]
+mod provider_connections;

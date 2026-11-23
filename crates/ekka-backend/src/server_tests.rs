@@ -117,10 +117,9 @@ async fn an_unknown_route_is_the_contracts_unknown_operation() {
     }
 }
 
-/// A verified call reaches its operation; the reserved operation answers
-/// NOT_AVAILABLE and never reaches one.
+/// Provider dispatch requires a separate, well-formed credential transport.
 #[tokio::test]
-async fn a_verified_call_reaches_its_operation_and_the_reserved_one_does_not() {
+async fn a_verified_call_reaches_its_operation_and_provider_material_is_required() {
     let (h, n) = counting();
     let (_d, p) = start(uid(), Duration::from_secs(5), h);
     for (m, t) in [
@@ -139,9 +138,16 @@ async fn a_verified_call_reaches_its_operation_and_the_reserved_one_does_not() {
     assert_eq!(n.load(Ordering::SeqCst), 5);
     assert_eq!(
         call(&p, "POST", "/v1/providers", &signed(b"{}"), b"{}").await,
+        Some((200, refused("CREDENTIAL_MISSING")))
+    );
+    assert_eq!(n.load(Ordering::SeqCst), 5);
+    let mut h = signed(b"{}");
+    h.push((crate::provider_credentials::HEADER.into(), "e30=".into()));
+    assert_eq!(
+        call(&p, "POST", "/v1/providers", &h, b"{}").await,
         Some((200, refused("NOT_AVAILABLE")))
     );
-    assert_eq!(n.load(Ordering::SeqCst), 5, "provider_connect is reserved");
+    assert_eq!(n.load(Ordering::SeqCst), 6);
 }
 
 /// grant_facts is verified like every call: a signed read reaches its
@@ -466,4 +472,36 @@ fn every_code_is_the_contracts() {
         let name = serde_json::to_value(c).unwrap();
         assert!(codes.contains(&name), "{name}");
     }
+}
+
+#[tokio::test]
+async fn provider_transport_never_bypasses_authorization_or_reaches_other_routes() {
+    let (h, n) = counting();
+    let (_d, p) = start(uid(), Duration::from_secs(5), h);
+    let mut headers = signed(b"{}");
+    headers.push((crate::provider_credentials::HEADER.into(), "e30=".into()));
+    assert_eq!(
+        call(&p, "POST", "/v1/desks/shop/stop", &headers, b"{}").await,
+        Some((200, refused("FIELD_NOT_ALLOWED")))
+    );
+    headers.push((crate::provider_credentials::HEADER.into(), "e30=".into()));
+    assert_eq!(
+        call(&p, "POST", "/v1/providers", &headers, b"{}").await,
+        Some((200, refused("CREDENTIAL_MISSING")))
+    );
+    let mut headers = signed(b"{}");
+    headers
+        .iter_mut()
+        .find(|(k, _)| k == "x-ekka-gate-token")
+        .unwrap()
+        .1 = "invalid".into();
+    headers.push((
+        crate::provider_credentials::HEADER.into(),
+        "not-base64".into(),
+    ));
+    assert_eq!(
+        call(&p, "POST", "/v1/providers", &headers, b"{}").await,
+        Some((200, refused("TOKEN_INVALID")))
+    );
+    assert_eq!(n.load(Ordering::SeqCst), 0);
 }

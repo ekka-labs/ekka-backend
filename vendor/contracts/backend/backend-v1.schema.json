@@ -185,6 +185,19 @@
         }
       },
       "then": {
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/provider_connect_body"
+          },
+          "headers": {
+            "required": [
+              "x-ekka-provider-credentials"
+            ]
+          }
+        },
         "not": {
           "anyOf": [
             {
@@ -195,11 +208,6 @@
             {
               "required": [
                 "provider"
-              ]
-            },
-            {
-              "required": [
-                "body"
               ]
             }
           ]
@@ -235,6 +243,56 @@
           ]
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "not": {
+              "const": "provider_connect"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "headers": {
+            "not": {
+              "required": [
+                "x-ekka-provider-credentials"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "provider_info"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "provider"
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "name"
+              ]
+            },
+            {
+              "required": [
+                "body"
+              ]
+            }
+          ]
+        }
+      }
     }
   ],
   "$defs": {
@@ -251,9 +309,10 @@
         "approval_mode",
         "discovery_evidence",
         "grant_facts",
+        "provider_info",
         "provider_connect"
       ],
-      "description": "Eleven operations, and `provider_connect`, which is reserved: it is part of the vocabulary and answers refused, code NOT_AVAILABLE, in v1."
+      "description": "The backend operations. provider_connect creates a provider or replaces its selected credentials through the governed local-only credential transport."
     },
     "name": {
       "type": "string",
@@ -303,6 +362,12 @@
         "x-ekka-backend-contract": {
           "const": "ekka.backend.v1",
           "description": "The backend protocol this call speaks. Read from this header, never from the token. An adapter refuses a call naming a protocol it does not serve."
+        },
+        "x-ekka-provider-credentials": {
+          "type": "string",
+          "maxLength": 16384,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "description": "Only for provider_connect: base64 of a JSON object mapping credential names to secret strings. Injected from the local Enclave vault after authorization, never set by a plan, recorded, logged or sent to Govern. Its keys must exactly equal body.credential_refs keys. An empty object is used for a keyless provider. Total decoded JSON is at most 8192 bytes; values are nonempty one-line strings. The adapter holds it in memory only and never copies it into operation records. Other operations refuse this header."
         }
       }
     },
@@ -527,6 +592,9 @@
         },
         "grant_facts": {
           "$ref": "#/$defs/grant_facts"
+        },
+        "provider_info": {
+          "$ref": "#/$defs/provider_info"
         }
       },
       "allOf": [
@@ -737,6 +805,23 @@
               ]
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "provider_info"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "ready"
+              },
+              "desk_ready": {
+                "const": true
+              }
+            }
+          }
         }
       ],
       "dependencies": {
@@ -813,6 +898,138 @@
             "$ref": "#/$defs/provider_fact"
           },
           "description": "Every provider the gateway holds in the adapter's workspace, read whole (every page), each name once; empty only when it holds none. A list that cannot be read whole is never answered short or empty: the read is refused `PROVIDERS_UNREADABLE`. More than 64 is refused `PROVIDERS_TOO_MANY`, never cut. The schema cannot see a repeated name; a reader refuses an answer that repeats one."
+        }
+      }
+    },
+    "provider_connect_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "profile_workspace",
+        "credential_refs"
+      ],
+      "description": "Provider identifiers and local credential references only. Existing non-secret configuration stays on the backend and is preserved during rotation; a new provider starts with empty explicit config. No config or credential value is a plan input. The grant must allow name and its resulting provider_config_digest, computed with REDACTED credential values. Absent expected_resource_version means create only; present means update only, exactly at that version. On update the type and profile workspace must match the existing provider; credential updates merge into its existing credential names, and the resulting full configuration must match the grant. Credential values never occur in this body. Each credential_ref is a random UUID issued by privileged providers_stage IPC, naming a one-use entry in the Enclave-only DESK_PROVIDER_CREDENTIAL_ namespace. It is never a caller-supplied vault path or a credential digest. The entry expires after ten minutes, cannot be overwritten through generic secret writes, and is atomically removed before its single send. A failed or interrupted attempt requires staging again. The API gate reads these entries only for the authorized local apis/desks POST /v1/providers call after validating the signed body pin and connection binding. The backend never resolves vault references. A duplicate replays its saved result without another write; an unresolved credential write is not automatically reissued after a restart because its secret is not recorded.",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "type": {
+          "$ref": "#/$defs/name"
+        },
+        "profile_workspace": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/name"
+            }
+          ]
+        },
+        "credential_refs": {
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          "additionalProperties": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/uuid"
+              },
+              {
+                "not": {
+                  "const": "00000000-0000-0000-0000-000000000000"
+                }
+              }
+            ]
+          }
+        },
+        "expected_resource_version": {
+          "$ref": "#/$defs/resource_version"
+        }
+      }
+    },
+    "provider_info": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "profile_workspace",
+        "credential_names",
+        "credentials",
+        "enforced"
+      ],
+      "description": "Local provider metadata for native connection setup. No configuration values, credential values or customer content. An absent resource_version means the provider does not exist yet; a present version is required on the ensuing rotation. The adapter resolves the effective profile with the same precedence used by writes.",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "type": {
+          "$ref": "#/$defs/name"
+        },
+        "profile_workspace": {
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/name"
+            }
+          ]
+        },
+        "resource_version": {
+          "$ref": "#/$defs/resource_version"
+        },
+        "credential_names": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          }
+        },
+        "credentials": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "env_vars",
+              "required"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+              },
+              "env_vars": {
+                "type": "array",
+                "maxItems": 16,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+                }
+              },
+              "required": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "enforced": {
+          "type": "boolean"
+        },
+        "configuration_digest": {
+          "$ref": "#/$defs/digest",
+          "description": "The existing provider configuration digest, or the proposed empty-config digest for a keyless or single-credential profile using its default credential name. A grant can therefore be prepared before the first credential is set. Values are REDACTED when computing it; this is never a credential-value digest. Absent when a multi-credential new provider needs an explicit configuration choice."
         }
       }
     }
